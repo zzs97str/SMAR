@@ -1,0 +1,61 @@
+project_name: "search_multimodal_rank"
+project_dir: "output_multimodal_rank"
+trainer: multimodal_trainer
+
+# Model Configuration
+model:
+  model_name_or_path: "model/Qwen-VL-2B/"  # Base model
+  tokenizer_name_or_path: "model/Qwen-VL-2B/"  # Tokenizer
+  load_from_new: false  # Whether to load from the latest checkpoint
+  lora_checkpoint_dir: "multimodal_trainer_checkpoints/"  # LoRA checkpoint save path
+  gradient_checkpointing: true  # Enable gradient checkpointing to save GPU memory
+  load_in_4bit: false
+  use_lora: true
+
+# Dataset Configuration
+datasets:
+  dataset_name_or_path: "dataset/PocessedQilin/"  # Dataset path
+  train_data_processor: "MultiModalTrainingDataProcessor_listwise"  # Training data processor
+  tokenizer_name_or_path: "model/Qwen-VL-2B/"
+  batch_size: 1  # Batch size
+  eval_batch_size: 1
+  max_length: 512  # Maximum sequence length
+  negative_samples: 1  # Number of negative samples per query
+  use_title: true  # Whether to use title
+  use_content: false  # Whether to use content
+
+# Training Configuration
+training:
+  num_epochs: 16  # Number of training epochs
+  eval_steps: 500  # Evaluation steps
+  save_steps: 500  # Save steps
+  eval_epochs: 1  # Evaluate every N epochs
+  save_epochs: 1  # Save model every N epochs
+
+# Optimizer Configuration
+optimizer: 
+  name: AdamW  # Use AdamW optimizer
+  kwargs:
+    lr: 1e-5
+    weight_decay: 0.01
+    betas: [0.9, 0.999]
+    eps: 1e-5
+
+# Learning Rate Scheduler Configuration
+scheduler:
+  name: LinearLR
+  kwargs:
+    total_iters: 100
+
+# Evaluation Configuration
+evaluation:
+  target_metric: "MRR@10"  # Target evaluation metric
+  output_dir: "eval_results"  # Evaluation results output directory
+  qrels_data_path: "dataset/ProcessedDataset/MultiModal/Multimodal_labels_ctr_sorted.csv"  # Evaluation data path
+  rerank_depth: 1000  # Reranking depth
+  results_key: "search_results"  # Use XHS exposure results
+  sample_num: 1000  # Number of evaluation samples, evaluate first {sample_num} samples
+
+# Logger Configuration
+logger:
+  log_with: "tensorboard"  # Use tensorboard for training log recording
