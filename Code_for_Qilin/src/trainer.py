@@ -1,3 +1,6 @@
+import os
+os.environ["NCCL_SOCKET_TIMEOUT"] = "1800000"
+
 import sys
 from accelerate import Accelerator
 from accelerate.utils import set_seed
@@ -5,7 +8,6 @@ from evaluator import *
 from dataset_factory import *
 from utils import *
 from tqdm import tqdm
-import os
 import torch
 from transformers import AutoTokenizer, AutoModelForCausalLM, AutoConfig, AutoModel
 import torch_optimizer as optim
@@ -21,7 +23,7 @@ from model_factory import *
 from torch.utils.cpp_extension import CUDA_HOME
 sys.path.append("../extensions/accelerate")
 import logging
-
+import itertools
 
 # Configure the logging module here; any subsequent configurations will be ineffective
 logging.basicConfig(filename="/root/paddlejob/workspace/env_run/output/multimodal/logger.log",
@@ -37,15 +39,6 @@ scheduler_class = {"CosineAnnealingLR": CosineAnnealingLR, "LinearLR": LinearLR}
 os.environ['CUDA_HOME']="/usr/local/cuda"
 
 from pprint import pprint
-# Check if CUDA is available
-if torch.cuda.is_available():
-    # If CUDA is available, print its details
-    print("Installation path of CUDA:", CUDA_HOME)
-    print("CUDA version:", torch.version.cuda)
-    print("CUDA device count:", torch.cuda.device_count())
-else:
-    # If CUDA is not available, provide a message
-    print("CUDA is not available.")
 
 def dataset_class(class_name):
     cls = registry.get_class(class_name)
@@ -57,8 +50,10 @@ def dataset_class(class_name):
 class BaseTrainer:
     """Base Trainer Class"""
 
-    def __init__(self, config):
+    def __init__(self, config,config1,config2):
         self.config = config
+        self.config1 = config1
+        self.config2 = config2
         self.setup_environment()
         self.setup_tracking()
         self.setup_model()
@@ -105,21 +100,6 @@ class BaseTrainer:
         self.target_metric = self.config['evaluation']['target_metric']
         self.best_metric = -1
 
-    # def load_optimizer(self):
-    #     """Load optimizer"""
-    #     optimizer_config = self.config['optimizer']
-    #     optimizer_name = optimizer_config['name']
-
-    #     # 正确构造参数列表（保留参数名信息）
-    #     param_groups = []
-    #     for name, param in self.model.named_parameters():
-    #         if param.requires_grad:
-    #             param_groups.append({'params': param, 'name': name})  # 保留参数名
-    #             print(f"{name} requires_grad")
-
-    #     # 初始化优化器（正确传递参数组）
-    #     self.optimizer = optimizer_class[optimizer_name](param_groups, **optimizer_config['kwargs'])
-
 
     def load_optimizer(self):
         """Load optimizer"""
@@ -131,8 +111,7 @@ class BaseTrainer:
             {'params': [p for p in self.model.classifier.parameters() if p.requires_grad], 'lr': optimizer_config['kwargs']['lr']},
             {'params': [p for p in self.model.binary_encoders.parameters() if p.requires_grad], 'lr': optimizer_config['kwargs']['lr']},
             {'params': [p for p in self.model.user_binary_encoders.parameters() if p.requires_grad], 'lr': optimizer_config['kwargs']['lr']},
-            # {'params': [p for p in self.model.fusion_module.parameters() if p.requires_grad], 'lr': optimizer_config['kwargs']['lr']},
-            # {'params': [self.model.alpha, self.model.beta, self.model.gamma], 'lr': 1e-3} # 新增参数组
+            {'params': [p for p in self.model.fusion_module.parameters() if p.requires_grad], 'lr': optimizer_config['kwargs']['lr']},
             ]
 
         # 创建优化器时传入参数分组
@@ -184,550 +163,6 @@ class BaseTrainer:
         all_tensors[self.local_rank] = t
         all_tensors = torch.cat(all_tensors, dim=0)
         return all_tensors
-
-
-class DenseRetrievalTrainer(BaseTrainer):
-    """Dense Retrieval Model Trainer"""
-
-    def setup_model(self):
-        self._handle_previous_checkpoints()
-        self.model = DenseRetrievalModel(self.config)
-        if self.accelerator.is_main_process:
-            print_trainable_params_stats(self.model.model)
-
-    def setup_data(self):
-        self.load_training_data()
-        self.build_evaluator()
-        self.negatives_x_device = self.config['training']['negatives_x_device']
-
-    def prepare_for_training(self):
-        self.model.model, self.optimizer, self.train_data_loader, self.scheduler = \
-            self.accelerator.prepare(
-                self.model.model, 
-                self.optimizer, 
-                self.train_data_loader, 
-                self.scheduler
-            )
-
-    def _handle_previous_checkpoints(self):
-        """Handle previous checkpoints"""
-        if self.accelerator.is_main_process:
-            if self.config['model']['load_from_new']:
-                self._load_latest_checkpoint()
-            self._load_best_checkpoint()
-        self.accelerator.wait_for_everyone()
-
-    def _load_best_checkpoint(self):
-        """Load the best checkpoint"""
-        base_project_dir = self.config['base_project_dir']
-        result_file_paths = glob(base_project_dir+f'/*/best_{self.target_metric}.txt')
-        best_file_path = self._find_best_checkpoint(result_file_paths)
-        if best_file_path:
-            self._copy_checkpoint_files(best_file_path)
-
-    def _find_best_checkpoint(self, file_paths):
-        """find the best checkpoint"""
-        best_file_path = ''
-        for file_path in file_paths:
-            score = float(open(file_path).readline())
-            print(f'{file_path} {score}')
-            if score > self.best_metric:
-                self.best_metric = score
-                best_file_path = file_path
-        return best_file_path
-
-    def _load_latest_checkpoint(self):
-        """Load the latest checkpoint"""
-        latest_dir = find_latest_dir_with_subdir(self.config['base_project_dir'])
-        if latest_dir:
-            self._copy_from_dir(latest_dir)
-
-    def _copy_checkpoint_files(self, source_path):
-        """Copy checkpoint files"""
-        source_dir = os.path.dirname(source_path)
-        self._copy_from_dir(source_dir)
-        print(f'Best {self.target_metric} is {self.best_metric}')
-
-    def _copy_from_dir(self, source_dir):
-        """Copy files from specified directory"""
-        for cand in ['base_lora_checkpoint_dir']:
-            cand_path = self.config['model'][cand]
-            if os.path.exists(f'{source_dir}/{cand_path}'):
-                shutil.copytree(
-                    f'{source_dir}/{cand_path}', 
-                    f"{self.config['project_dir']}/{cand_path}"
-                )
-                self.config['model']['model_name_or_path'] = f"{self.config['project_dir']}/{cand_path}"
-
-    def build_evaluator(self):
-        """build evaluator"""
-        self.evaluation_config = self.config['evaluation']
-        if self.evaluation_config['evaluate_type'] == 'rerank':
-            self.test_loader = self._create_test_loader()
-            self.evaluator = DenseRetrievalRerankingEvaluator(
-                self.accelerator,
-                self.model,
-                self.test_loader,
-                **self.evaluation_config
-            )
-        else:
-            self.note_loader = self._create_note_loader()
-            self.query_loader = self._create_query_loader()
-            self.evaluator = DenseRetrievalEvaluator(
-                self.accelerator,
-                self.model,
-                self.note_loader,
-                self.query_loader,
-                **self.evaluation_config
-            )
-    
-    def _create_test_loader(self):
-        return DenseRetrievalRerankingTestDataProcessor(
-            local_rank=self.local_rank,
-            num_processes=self.num_processes,
-            **self.config['datasets'],
-            **self.config['evaluation']
-        ).get_dataloader()
-
-    def _create_note_loader(self):
-        return NoteDataProcessor(
-            self.local_rank,
-            self.num_processes,
-            **self.config['datasets']
-        ).get_dataloader()
-
-    def _create_query_loader(self):
-        return QueryDataProcessor(
-            self.local_rank,
-            self.num_processes,
-            **self.config['datasets']
-        ).get_dataloader()
-
-    def load_training_data(self):
-        dataset_config = self.config['datasets']
-        train_data_processor = dataset_class(dataset_config['train_data_processor'])
-        self.train_data_loader = train_data_processor(**dataset_config).get_dataloader()
-        self.accelerator.wait_for_everyone()
-
-    def train_epoch(self, epoch):
-        pbar = tqdm(
-            total=len(self.train_data_loader), 
-            disable=not self.accelerator.is_local_main_process
-        )
-
-        for step, batch in enumerate(self.train_data_loader):
-            loss = self._train_step(batch)
-            self._update_progress(pbar, epoch, step, loss)
-            self._handle_periodic_actions(loss, epoch, step)
-
-        pbar.close()
-
-    def _train_step(self, batch):
-        self.model.model.train()
-        self.optimizer.zero_grad()
-
-        query_emb, passage_emb = self._get_embeddings(batch)
-        loss = self.contrastive_loss(query_emb, passage_emb)
-
-        self.accelerator.backward(loss)
-        self.optimizer.step()
-        self.scheduler.step()
-
-        return loss
-
-    def _get_embeddings(self, batch):
-        """get the embeddings"""
-        if self.config['model']['tie_model_weights']:
-            return self._get_tied_embeddings(batch)
-        else:
-            raise NotImplementedError
-
-    def _get_tied_embeddings(self, batch):
-        batch_size = batch['queries_tokenized']['input_ids'].shape[0]
-        merged_tokenized = batch['merged_tokenized']
-        merged_emb = self.model.forward(**merged_tokenized)
-        query_emb = merged_emb[:batch_size, :]
-        passage_emb = merged_emb[batch_size:, :]
-        return query_emb, passage_emb
-
-    def _update_progress(self, pbar, epoch, step, loss):
-        self.step += 1
-        pbar.update(1)
-        pbar.set_description(
-            f"Epoch {epoch} - Step {step} - Loss {loss.cpu().detach().float().numpy():.4f}"
-        )
-
-    def _handle_periodic_actions(self, loss, epoch, step):
-        stats = {'training/loss': float(loss.cpu().detach().float().numpy())}
-
-        if self.step % self.config['training']['eval_steps'] == 0 or (epoch % self.config['training']['eval_epochs'] == 0 and step==0):
-            self.evaluate()
-
-        if self.step % self.config['training']['save_steps'] == 0 or epoch % self.config['training']['save_epochs'] == 0:
-            self.save_checkpoint(suffix="new", is_best=False)
-
-        if self.accelerator.is_local_main_process:
-            self.accelerator.log(stats, step=self.step)
-
-    def contrastive_loss(self, query_emb, passage_emb):
-        cross_entropy_loss = torch.nn.CrossEntropyLoss(reduction='mean')
-
-        if self.negatives_x_device:
-            query_emb = self._dist_gather_tensor(query_emb)
-            passage_emb = self._dist_gather_tensor(passage_emb)
-
-        scores = torch.matmul(query_emb, passage_emb.transpose(0, 1))
-        scores = scores.view(query_emb.size(0), -1)
-
-        labels = torch.arange(
-            scores.size(0), 
-            device=scores.device, 
-            dtype=torch.long
-        )
-        labels = labels * (passage_emb.size(0) // query_emb.size(0))
-
-        return cross_entropy_loss(scores, labels)
-
-    def evaluate(self):
-        metrics = self.evaluator.evaluate()
-        if self.accelerator.is_local_main_process:
-            self._log_metrics(metrics)
-
-    def _log_metrics(self, metrics):
-        for key, val in metrics.items():
-            self.accelerator.log({f'evaluation/{key}': val}, step=self.step)
-            if self.target_metric == key and val > self.best_metric:
-                self.best_metric = val
-                self.save_checkpoint()
-
-    def save_checkpoint(self, suffix='', is_best=True):
-        save_paths = self._get_save_paths(suffix)
-        model = self.accelerator.unwrap_model(self.model.model)
-        model.save_pretrained(save_paths['lora'])
-
-        if is_best:
-            self._save_best_metric(save_paths['project'])
-
-    def _get_save_paths(self, suffix):
-        base_paths = {
-            'lora': self.config['model']['lora_checkpoint_dir'],
-            'project': self.config['project_dir']
-        }
-
-        save_paths = {}
-        for key, base_path in base_paths.items():
-            if key != 'project':
-                save_paths[key] = os.path.join(base_path, suffix) if suffix else base_path
-                os.makedirs(save_paths[key], exist_ok=True)
-        save_paths['project'] = base_paths['project']
-
-        return save_paths
-
-    def _save_best_metric(self, project_path):
-        metric_path = os.path.join(project_path, f'best_{self.target_metric}.txt')
-        with open(metric_path, 'w') as f:
-            f.write(str(self.best_metric))
-        result_dir = self.config['evaluation']['output_dir']
-        target_dir = os.path.join(project_path, 'best_results')
-        os.makedirs(target_dir, exist_ok=True)
-        shutil.copytree(result_dir, target_dir, dirs_exist_ok=True)
-
-
-class DCNTrainer(BaseTrainer):
-    """DCN Model Trainer for Search"""
-
-    def __init__(self, config):
-        super().__init__(config)
-        self.grad_stats = {
-            'max_grad': 0.0,
-            'min_grad': float('inf'),
-            'grad_norm_history': [],
-            'gradient_vanishing_count': 0,
-            'gradient_exploding_count': 0
-        }
-        # Set thresholds for gradient vanishing and exploding
-        self.grad_vanish_threshold = 1e-4
-        self.grad_explode_threshold = 10.0
-
-    def load_optimizer(self):
-        """Load optimizer"""
-        optimizer_config = self.config['optimizer']
-        optimizer_name = optimizer_config['name']
-        params = [(k, v) for k, v in self.model.named_parameters() if v.requires_grad]
-        non_embedding_params = {'params': [v for k, v in params if 'embedding' not in k]}
-        embedding_params = {'params': [v for k, v in params if 'embedding' in k], 'lr':1e-1}
-        self.optimizer = optimizer_class[optimizer_name]([non_embedding_params, embedding_params], **optimizer_config['kwargs'])
-
-    def _check_gradients(self):
-        """Check gradient status, including vanishing and exploding"""
-        total_norm = 0.0
-        max_grad = 0.0
-        min_grad = float('inf')
-        has_valid_grad = False
-        no_grad_params = []
-
-        for name, param in self.model.named_parameters():
-            if not param.requires_grad:
-                continue
-
-            if param.grad is None:
-                no_grad_params.append(name)
-                continue
-
-            param_norm = param.grad.data.norm(2)
-            total_norm += param_norm.item() ** 2
-
-            # Get max and min values of non-zero gradients
-            grad_abs = param.grad.data.abs()
-            grad_nonzero = grad_abs[grad_abs > 0]
-            if grad_nonzero.numel() > 0:
-                has_valid_grad = True
-                max_grad = max(max_grad, grad_nonzero.max().item())
-                min_grad = min(min_grad, grad_nonzero.min().item())
-
-            # Check gradient vanishing
-            if param_norm < self.grad_vanish_threshold:
-                self.grad_stats['gradient_vanishing_count'] += 1
-                if self.accelerator.is_local_main_process:
-                    print(f"\nWarning: Parameter {name} may have vanishing gradient (norm: {param_norm:.6f})")
-
-            # Check gradient exploding
-            if param_norm > self.grad_explode_threshold:
-                self.grad_stats['gradient_exploding_count'] += 1
-                if self.accelerator.is_local_main_process:
-                    print(f"\nWarning: Parameter {name} may have exploding gradient (norm: {param_norm:.6f})")
-
-            # Record detailed gradient information
-            if self.accelerator.is_local_main_process and self.step % 100 == 0:
-                print(f"Gradient statistics for parameter {name}:\n"
-                      f"  - Norm: {param_norm:.6f}\n"
-                      f"  - Max value: {grad_abs.max().item():.6f}\n"
-                      f"  - Min non-zero value: {grad_nonzero.min().item() if grad_nonzero.numel() > 0 else 0:.6f}\n"
-                      f"  - Zero gradient ratio: {(grad_abs == 0).float().mean().item():.2%}")
-
-        # Print warning if parameters have no gradients
-        if no_grad_params and self.accelerator.is_local_main_process:
-            print(f"\nWarning: The following parameters have no gradients:\n{', '.join(no_grad_params)}")
-
-        total_norm = total_norm ** 0.5
-        self.grad_stats['max_grad'] = max(self.grad_stats['max_grad'], max_grad)
-        if has_valid_grad:
-            self.grad_stats['min_grad'] = min(self.grad_stats['min_grad'], min_grad)
-
-        return total_norm
-
-    def _log_gradient_stats(self):
-        """Log gradient statistics"""
-        if self.accelerator.is_local_main_process:
-            stats = {
-                'gradient/max_grad': self.grad_stats['max_grad'],
-                'gradient/min_grad': self.grad_stats['min_grad'],
-                'gradient/vanishing_count': self.grad_stats['gradient_vanishing_count'],
-                'gradient/exploding_count': self.grad_stats['gradient_exploding_count']
-            }
-
-            if len(self.grad_stats['grad_norm_history']) > 0:
-                stats['gradient/mean_norm'] = sum(self.grad_stats['grad_norm_history']) / len(self.grad_stats['grad_norm_history'])
-
-            self.accelerator.log(stats, step=self.step)
-
-    def setup_model(self):
-        self._handle_previous_checkpoints()
-        self.model = DCNModel(
-                    self.config,
-                    num_cross_layers=3,
-                    hidden_size=256*2,
-                    dropout_rate=0.1,
-                    user_id_embedding_dim=32*2  
-                )
-        model_path = os.path.join(self.config['model']['model_name_or_path'], 'dcn_model.pt')
-        print(f'loading model from {model_path}')
-        self.model.load_model(model_path)
-        if self.accelerator.is_main_process:
-            print_trainable_params_stats(self.model)
-
-    def setup_data(self):
-        self.load_training_data()
-        self.build_evaluator()
-
-    def prepare_for_training(self):
-        self.model, self.optimizer, self.train_data_loader, self.scheduler = \
-            self.accelerator.prepare(
-                self.model, 
-                self.optimizer, 
-                self.train_data_loader, 
-                self.scheduler
-            )
-
-    def _handle_previous_checkpoints(self):
-        if self.config['model']['load_from_new']:
-            self._load_latest_checkpoint()
-        self._load_best_checkpoint()
-        self.accelerator.wait_for_everyone()
-
-    def _load_best_checkpoint(self):
-        base_project_dir = self.config['base_project_dir']
-        result_file_paths = glob(base_project_dir+f'/*/best_{self.target_metric}.txt')
-        best_file_path = self._find_best_checkpoint(result_file_paths)
-        if best_file_path:
-            self._copy_checkpoint_files(best_file_path)
-
-    def _find_best_checkpoint(self, file_paths):
-        best_file_path = ''
-        for file_path in file_paths:
-            score = float(open(file_path).readline())
-            print(f'{file_path} {score}')
-            if score > self.best_metric:
-                self.best_metric = score
-                best_file_path = file_path
-        return best_file_path
-
-    def _load_latest_checkpoint(self):
-        latest_dir = find_latest_dir_with_subdir(self.config['base_project_dir'])
-        if latest_dir:
-            self._copy_from_dir(latest_dir)
-
-    def _copy_checkpoint_files(self, source_path):
-        source_dir = os.path.dirname(source_path)
-        self._copy_from_dir(source_dir)
-        print(f'Best {self.target_metric} is {self.best_metric}')
-
-    def _copy_from_dir(self, source_dir):
-        for cand in ['base_lora_checkpoint_dir']:
-            cand_path = self.config['model'][cand]
-            print(f'copying {cand_path} from {source_dir} to {self.config["project_dir"]}')
-            if os.path.exists(f'{source_dir}/{cand_path}'):
-                if self.accelerator.is_main_process:
-                    shutil.copytree(
-                        f'{source_dir}/{cand_path}', 
-                        f"{self.config['project_dir']}/{cand_path}"
-                    )
-                self.config['model']['model_name_or_path'] = f"{self.config['project_dir']}/{cand_path}"
-
-    def build_evaluator(self):
-        self.test_loader = self._create_test_loader()
-        self.evaluation_config = self.config['evaluation']
-        self.evaluator = DCNEvaluator(
-            self.accelerator,
-            self.model,
-            self.test_loader,
-            **self.evaluation_config
-        )
-
-    def _create_test_loader(self):
-        return DCNTestDataProcessor(
-            local_rank=self.local_rank,
-            num_processes=self.num_processes,
-            **self.config['datasets'],
-            **self.config['evaluation']
-        ).get_dataloader()
-
-    def load_training_data(self):
-        dataset_config = self.config['datasets']
-        train_data_processor = dataset_class(dataset_config['train_data_processor'])
-        self.train_data_loader = train_data_processor(**dataset_config).get_dataloader()
-        self.accelerator.wait_for_everyone()
-
-    def train_epoch(self, epoch):
-        pbar = tqdm(
-            total=len(self.train_data_loader), 
-            disable=not self.accelerator.is_local_main_process
-        )
-
-        for step, batch in enumerate(self.train_data_loader):
-            loss = self._train_step(batch)
-            self._update_progress(pbar, epoch, step, loss)
-            self._handle_periodic_actions(loss, epoch, step)
-
-        pbar.close()
-
-    def _train_step(self, batch):
-        self.model.train()
-        for param in self.model.parameters():
-            param.requires_grad = True
-        query_features, user_features, note_features, labels = batch
-        device = self.accelerator.device        
-        query_features = {k: v.to(device) for k, v in query_features.items()}
-        user_features = {k: v.to(device) for k, v in user_features.items()}
-        note_features = {k: v.to(device) for k, v in note_features.items()}
-        labels = labels.to(device)
-
-        for name, param in self.model.named_parameters():
-            if not param.requires_grad:
-                print(f"Warning: Parameter {name} does not require gradients")
-        criterion = torch.nn.BCEWithLogitsLoss()
-        logits = self.model(query_features, user_features, note_features)
-        loss = criterion(logits.squeeze(-1), labels)     
-
-        self.accelerator.backward(loss)
-
-        self.optimizer.step()
-        self.scheduler.step()
-        self.optimizer.zero_grad()        
-        return loss
-
-    def _update_progress(self, pbar, epoch, step, loss):
-        self.step += 1
-        pbar.update(1)
-        pbar.set_description(
-            f"Epoch {epoch} - Step {step} - Loss {loss.cpu().detach().float().numpy():.4f}"
-        )
-
-    def _handle_periodic_actions(self, loss, epoch, step):
-        stats = {'training/loss': float(loss.cpu().detach().float().numpy())}
-
-        if self.step % self.config['training']['eval_steps'] == 0 or (epoch % self.config['training']['eval_epochs'] == 0 and step==0):
-            self.evaluate()
-
-        if self.step % self.config['training']['save_steps'] == 0 or epoch % self.config['training']['save_epochs'] == 0:
-            self.save_checkpoint(suffix="new", is_best=False)
-
-        if self.accelerator.is_local_main_process:
-            self.accelerator.log(stats, step=self.step)
-
-    def evaluate(self):
-        metrics = self.evaluator.evaluate()
-        if self.accelerator.is_local_main_process:
-            self._log_metrics(metrics)
-
-    def _log_metrics(self, metrics):
-        for key, val in metrics.items():
-            self.accelerator.log({f'evaluation/{key}': val}, step=self.step)
-            if self.target_metric == key and val > self.best_metric:
-                self.best_metric = val
-                self.save_checkpoint()
-
-    def save_checkpoint(self, suffix='', is_best=True):
-        save_paths = self._get_save_paths(suffix)
-        model = self.accelerator.unwrap_model(self.model)
-        torch.save(model.state_dict(), os.path.join(save_paths['lora'], 'dcn_model.pt'))
-
-        if is_best:
-            self._save_best_metric(save_paths['project'])
-
-    def _get_save_paths(self, suffix):
-        base_paths = {
-            'lora': self.config['model']['lora_checkpoint_dir'],
-            'project': self.config['project_dir']
-        }
-
-        save_paths = {}
-        for key, base_path in base_paths.items():
-            if key != 'project':
-                save_paths[key] = os.path.join(base_path, suffix) if suffix else base_path
-                os.makedirs(save_paths[key], exist_ok=True)
-        save_paths['project'] = base_paths['project']
-
-        return save_paths
-
-    def _save_best_metric(self, project_path):
-        metric_path = os.path.join(project_path, f'best_{self.target_metric}.txt')
-        with open(metric_path, 'w') as f:
-            f.write(str(self.best_metric))
-        result_dir = self.config['evaluation']['output_dir']
-        target_dir = os.path.join(project_path, 'best_results')
-        os.makedirs(target_dir, exist_ok=True)
-        shutil.copytree(result_dir, target_dir, dirs_exist_ok=True)
 
 
 class CrossEncoderTrainer(BaseTrainer):
@@ -918,57 +353,6 @@ class CrossEncoderTrainer(BaseTrainer):
 
         return loss
 
-    def _train_step_old(self, batch):
-        """Train one pair-wise step with Hinge Loss"""
-        self.model.train()
-
-        # 1. 分别取出正、负对的输入，并搬到设备上
-        inp_pos = {k: v.to(self.accelerator.device) for k, v in batch["inp_pos"].items()}
-        inp_neg = {k: v.to(self.accelerator.device) for k, v in batch["inp_neg"].items()}
-        if self.accelerator.is_local_main_process:
-            print(f"inp_pos['input_ids'].shape:{inp_pos['input_ids'].shape}")
-            print(f"inp_neg['input_ids'].shape:{inp_neg['input_ids'].shape}")
-
-        # 2. 合并正负样本，防止正负样本前向传播模型两次，会影响梯度反传
-        combined_input_ids = torch.cat([inp_pos["input_ids"], inp_neg["input_ids"]], dim=0)
-        print("运行到这里——2")
-        combined_attention_mask = torch.cat([inp_pos["attention_mask"], inp_neg["attention_mask"]], dim=0)
-        print("运行到这里——3")
-        combined_token_type_ids = torch.cat([inp_pos["token_type_ids"], inp_neg["token_type_ids"]], dim=0)        
-        combined_inputs = {
-            "input_ids": combined_input_ids,
-            "attention_mask": combined_attention_mask,
-            "token_type_ids": combined_token_type_ids
-        }
-        print("运行到这里——4")
-
-        # 2. 前向计算：分别得到正例和负例的 logits
-        # combined_inputs.shape:  [num_1+num_2,seq_len],num_1为正样本的个数 与 num_2 负样本的个数相等
-        logits = self.model(**combined_inputs)
-        # logits.shape:  [num_1+num_2,1]
-        logits = logits.view(-1)  # 假设输出logits
-        # logits.shape:  [num_1+num_2]
-        
-        batch_size = inp_pos["input_ids"].shape[0]
-        # batch_size:  [num_1] 这里实际上不是 batch size       
-        logits_pos = logits[:batch_size]
-        # logits_pos.shape: [num_1]
-        logits_neg = logits[batch_size:]
-        # logits_neg.shape: [num_2]
-
-        # 3. 计算 Hinge Loss
-        # 我们希望 logits_pos - logits_neg >= margin
-        margin = 0.5
-        loss = torch.clamp(margin - (logits_pos - logits_neg), min=0).mean()
-
-        # 4. 反向传播与优化
-        self.optimizer.zero_grad()
-        self.accelerator.backward(loss)
-        self.optimizer.step()
-        self.scheduler.step()
-
-        return loss
-
     def _train_step(self, batch):
         """Train one pair-wise step with Hinge Loss"""
         self.model.train()
@@ -1020,45 +404,6 @@ class CrossEncoderTrainer(BaseTrainer):
                 print(f"[No grad] {name}")
         # 梯度裁剪
         self.accelerator.clip_grad_norm_(self.model.parameters(), 1.0)
-        self.optimizer.step()
-        self.scheduler.step()
-
-        return loss
-
-    def merge_inputs(self, inputs_i, inputs_j):
-        merged = {}
-        for key in inputs_i.keys():
-            merged[key] = torch.cat([inputs_i[key], inputs_j[key]], dim=0)
-        return merged
-
-    def _train_step_ranknet(self, batch):
-        """Train one pair-wise step with Hinge Loss"""
-        self.model.train()
-
-        # 1. 获取输入与标签
-        inp_i = {k: v.to(self.accelerator.device) for k, v in batch["input_i"].items()}
-        inp_j = {k: v.to(self.accelerator.device) for k, v in batch["input_j"].items()}
-        labels = batch["labels"].to(self.accelerator.device)
-
-        merged_inputs = self.merge_inputs(inp_i, inp_j)
-        logits = self.model(**merged_inputs)  # shape: [2*N]
-        logits = logits.squeeze()
-
-        batch_size = inp_i["input_ids"].shape[0]
-        # batch_size:  [num_1] 这里实际上不是 batch size       
-        logits_i = logits[:batch_size]
-        # logits_pos.shape: [num_1]
-        logits_j = logits[batch_size:]
-
-        logits_diff = logits_i - logits_j  # shape: [N]
-
-        targets = (labels + 1) / 2  # 映射为 0/1 标签
-        loss_fct = torch.nn.BCEWithLogitsLoss()
-        loss = loss_fct(logits_diff, targets)
-
-        # 4. 反向传播与优化
-        self.optimizer.zero_grad()
-        self.accelerator.backward(loss)
         self.optimizer.step()
         self.scheduler.step()
 
@@ -1406,12 +751,47 @@ class VLMCrossEncoderTrainer(BaseTrainer):
         if self.accelerator.is_local_main_process:
             self._log_metrics(metrics)
 
+def get_top_p_notes(data, search_idx, p):
+    """
+    从给定的search_idx中返回得分前p的note_idx
+    
+    参数:
+    data: 原始JSON数据（已解析为字典）
+    search_idx: 要查询的search索引
+    p: 0~1之间的比例，表示要返回前p的note
+    
+    返回:
+    得分前p的note_idx列表，按得分从高到低排序
+    """
+    # 检查search_idx是否存在于数据中
+    if search_idx not in data:
+        return []
+    
+    # 获取该search_idx下的所有note及其得分
+    note_scores = data[search_idx]
+    
+    # 将note按得分从高到低排序
+    sorted_notes = sorted(note_scores.items(), key=lambda x: x[1], reverse=True)
+    
+    # 计算需要返回的数量
+    total = len(sorted_notes)
+    if total == 0:
+        return []
+    
+    # 计算要返回的数量（向上取整）
+    count = max(1, int(round(total * p)))  # 确保至少返回1个
+    count = min(count, total)  # 不超过总数量
+    
+    # 返回前count个note的索引
+    return [note[0] for note in sorted_notes[:count]]
+
+
 class MultiModalTrainer(BaseTrainer):
     """VLM cross-encoder model trainer"""
 
     def setup_model(self):
         self._handle_previous_checkpoints()
-        self.model = MultiModalRankModel(self.config)
+        self.model = MultiModalRankModel(self.config, config1=self.config1, config2=self.config2)
         if self.accelerator.is_main_process:
             print_trainable_params_stats(self.model)
             # 单独统计并打印 classifier 的可训练参数
@@ -1421,21 +801,27 @@ class MultiModalTrainer(BaseTrainer):
             # print(f"Trainable parameters in binary_encoders: {encoders_trainable_params}")
             # encoders_trainable_params = sum(p.numel() for p in self.model.user_binary_encoders.parameters() if p.requires_grad)
             # print(f"Trainable parameters in user_binary_encoders: {encoders_trainable_params}")
-            # encoder_grad=True
-            # for encoder in self.model.binary_encoders.values():
-            #     for param in encoder.parameters():
-            #         if not param.requires_grad:
-            #             print(f"{param} grad 为:{param.grad}")
-            #             encoder_grad=False
-            # if not encoder_grad:
-            #     print("二进制编码器有被梯度冻结")
-            # else:
-            #     print("二进制编码器均可训练")
+        
+        # 标注策略:取各模态前 30% 的数据进行标注
+        # self.top_p = 0.3
+        # print(f"self.top_p:{self.top_p}") 
+
+        # 标注策略: 根据实验类型选择不同区间的数据
+        self.experiment_type = "middle_1"  # 可选值: "top", "middle_1", "middle_2", "middle_3", "bottom"
+        self.top_p = 0.2  # 保持0.3不变，用于计算30%的比例
+
+        print(f"实验类型: {self.experiment_type}, 比例: {self.top_p}")
 
     def setup_data(self):
         """Set up data loading and evaluator"""
         self.load_training_data()
         self.build_evaluator()
+        with open("dataset/ProcessedDataset/MultiModal/ExP5/text_predictions.json") as f:
+            self.text_label = json.load(f)
+
+        with open("dataset/ProcessedDataset/MultiModal/ExP5/figure_predictions.json") as f:
+            self.figure_label = json.load(f)
+        
 
     def prepare_for_training(self):
         """Prepare training environment"""
@@ -1526,8 +912,13 @@ class MultiModalTrainer(BaseTrainer):
             disable=not self.accelerator.is_local_main_process
         )
 
+
+        # itertools.islice(..., start_step, None)：是对数据本身的切片，作用是跳过 self.train_data_loader 中前 start_step 个批次的数据，只保留从 start_step 开始到末尾的批次
+        # enumerate(..., start=start_step)：是对迭代序号的起始值设置，不影响数据本身，仅让 step 变量从 start_step 开始计数。
+        # start_step = 3990
+        # for step, batch in enumerate(itertools.islice(self.train_data_loader, start_step, None), start=start_step):
+        
         for step, batch in enumerate(self.train_data_loader):
-            # loss = self._train_step(batch)
 
             if step == 1 and self.accelerator.is_local_main_process:
                 freeze1=True
@@ -1548,33 +939,10 @@ class MultiModalTrainer(BaseTrainer):
                 else:
                     print("已冻结 classifier")
 
-                # freeze3=True
-                # for name, param in self.model.module.binary_encoders.named_parameters():
-                #     if param.requires_grad:
-                #         freeze3=False
-                # if not freeze3:
-                #     print("未冻结 binary_encoders")
-                # else:
-                #     print("已冻结 binary_encoders")
-
-                # freeze4=True
-                # for name, param in self.model.module.user_binary_encoders.named_parameters():
-                #     if param.requires_grad:
-                #         freeze4=False
-                # if not freeze4:
-                #     print("未冻结 user_binary_encoders")
-                # else:
-                #     print("已冻结 user_binary_encoders")
-
-                # 设置 NumPy 打印选项，避免截断大数组
-                # np.set_printoptions(threshold=np.inf)
-                # # 使用 pprint 格式化输出，并只打印前三个输入
-                # print(f"训练时inp_pos (first 2):")
-                # pprint(batch['inp_pos'][:2])
-                # print(f"训练时inp_neg (first 2):")
-                # pprint(batch['inp_neg'][:2])
 
             # if (step % 500) == 1:
+            #     print(f"loss_1_factor: {self.model.module.loss_1_factor.item():.6f}")
+            #     print(f"loss_2_factor: {self.model.module.loss_2_factor.item():.6f}")
             #     print(f"alpha: {self.model.module.alpha.item():.6f}")
             #     print(f"beta: {self.model.module.beta.item():.6f}")
             #     print(f"gamma: {self.model.module.gamma.item():.6f}")
@@ -1645,14 +1013,14 @@ class MultiModalTrainer(BaseTrainer):
 
         #确保logits缩放到[-8, 8]
         logits = logits - logits.max(dim=1, keepdim=True).values  # 稳定性平移
-        if self.accelerator.is_local_main_process:
-            print(f"平移后logits:{logits}")
+        # if self.accelerator.is_local_main_process:
+        #     print(f"平移后logits:{logits}")
         scale =1.0
         logits = scale * torch.tanh(logits / scale)
         #tanh函数超过（-2,2）区间函数值变化不大
 
-        if self.accelerator.is_local_main_process:
-            print(f"放缩后logits:{logits}")
+        # if self.accelerator.is_local_main_process:
+        #     print(f"放缩后logits:{logits}")
         assert not torch.isnan(logits).any(), "Logits contains NaN"
         assert not torch.isinf(logits).any(), "Logits contains Inf"
 
@@ -1676,62 +1044,248 @@ class MultiModalTrainer(BaseTrainer):
         loss_per_position = log_cumsums - logits        # [batch_size, n_items]
         loss_per_position = loss_per_position.to(torch.float16)
 
-        if self.accelerator.is_local_main_process:
-            print(f"log_cumsums:{log_cumsums}")
+        # if self.accelerator.is_local_main_process:
+        #     print(f"log_cumsums:{log_cumsums}")
             
         # 5. 聚合损失
         return loss_per_position.sum(dim=1).mean() / note_nums      # 批处理平均
 
+
     def _train_step_Multimodal(self, batch):
         """Train one step"""
         self.model.train()
-        # self.accelerator.unwrap_model(self.model).model.enable_input_require_grads()
 
         # Listwise训练
         inputs = {k: v.to(self.accelerator.device) for k, v in batch["inputs"].items()}
-        # labels = batch["labels"]
-        # print(f"trainer labels:{labels}")
+        search_idxs = batch["search_idxs"]
+        assert len(search_idxs)==1, "search_idxs长度不为1,search_idxs:{search_idxs}"
+        search_idx = search_idxs[0]
+        # print(f"search_idx:{search_idx}")
+        note_idxs = batch["note_idxs"]
+        # 这里的note_idxs包含所有模态的 notes，但是有截断，而单一模态中没有截断，因此要筛选
         labels = torch.tensor(batch["labels"])
-        # labels = [torch.tensor(v).to(self.accelerator.device) for v in batch["labels"]]
-        # print(f"trainer labels:{labels}")
         # trainer labels:[0,5,3,1,2,4,6,7,8,9,10]
-        sorted_indices = torch.argsort(labels)
         # argsort：按升序排列后，排好的值在原来列表中的索引
+        sorted_indices = torch.argsort(labels)
+        # modal_indexs的顺序是经过 shufle后的顺序
+        modal_indexs = batch["modal_indexs"]
+        # 根据 模态 拆分 文本模态和图像模态的输入，0 为文本，1 为图像
+        text_inputs={}
+        figure_inputs={}
+        assert len(modal_indexs) == inputs["input_ids"].shape[0], "modal_indexs 与 input_ids batch size 不一致"
 
+        # 这里的text_inputs和figure_inputs显示了原始混排数据中当前 query 下有多少不同模态的 notes
+        for index, modal in enumerate(modal_indexs):
+            if modal==0:
+                for k, v in batch["text_inputs"].items():
+                    text_inputs[k] = v
+            elif modal==1:
+                for k, v in batch["fig_inputs"].items():
+                    figure_inputs[k] = v
+            else:
+                print(f"type(modal):type(modal)")
+                raise ValueError("模态不对")
+
+        # 混排listwise
         batch_features={k: [singleV.to(self.accelerator.device) for singleV in v] for k,v in batch["batch_features"].items() }
         user_feat = {k: [singleV.to(self.accelerator.device) for singleV in v] for k,v in batch["user_feat"].items() }
-        
         assert not torch.isnan(inputs["input_ids"]).any(), "Input contains NaN"
         assert not torch.isinf(inputs["input_ids"]).any(), "Input contains Inf"
-
         logits = self.model(batch_features=batch_features,user_feat=user_feat, **inputs)
-        # print(f"恢复顺序前logits:{logits}")
-        # print(f"trainer logits shape:{logits.shape}")
-        # trainer logits shape:torch.Size([1, 11, 1])
+        # print(f"multimodal logits shape:{logits.shape}")
+        # multimodal logits shape:torch.Size([14, 1])
         logits = logits.squeeze(dim=-1)  # view(-1) 的作用：将张量展平为 1D
-        # logits.shape:  [给定quer，查询结果个数]
-        # print(f"trainer 展平后 logits.shape:{logits.shape}")
-        logits = logits[sorted_indices].unsqueeze(dim=0)  # 保持批次维度
-        # print(f"恢复后 logits 形状: {logits.shape}")
-        # print(f"恢复顺序后logits:{logits}")
+        assert len(modal_indexs) == len(logits), "modal_indexs 和 logits 长度不匹配！"
+        # 按照 label 的顺序对混排的 logits 进行排序
+        logits_sortedby_label = logits[sorted_indices]
 
-        loss =self.compute_listmle_loss(logits)
-        # print(f"loss:{loss}")
 
-        # batch_size = inputs.shape[0]
-        # batch_size:  [num_1] 这里实际上不是 batch size       
-        # logits_pos = logits[:batch_size]
-        # # logits_pos.shape: [num_1]
-        # logits_neg = logits[batch_size:]
-        # # logits_neg.shape: [num_2]
+        # 将数据喂给单一模态模型前向传播,logits的顺序按照打乱后相应模态的顺序
+        # print(f"text_inputs['input_ids'].shape:{text_inputs['input_ids'].shape}")
+        # text_inputs['input_ids'].shape:torch.Size([9, 321])
 
-        # 3. 计算 Hinge Loss
-        # # 我们希望 logits_pos - logits_neg >= margin
-        # margin = 0.5
-        # loss = torch.clamp(margin - (logits_pos - logits_neg), min=0).mean()
+        # text_logits的顺序是 shuffle 后的顺序
+        # 单一文本模态给的序，混排蒸馏文本模态
+        try:
+            text_note2logits = self.text_label[str(search_idx)]
+            text_note2logits = {k: v for k, v in text_note2logits.items() if int(k) in note_idxs}
+            if len(text_note2logits)>0:
+                sorted_text_note_idx=[note_idx for note_idx, _ in sorted(
+                    text_note2logits.items(),
+                    key=lambda item: item[1],  # 按score排序
+                    reverse=True               # 降序排列
+                )]
+                assert len(note_idxs)==len(logits),"note_idxs和logits不是一一对应的,有问题"
+                note_to_logit = dict(zip(note_idxs, logits))
+                print(f"len(sorted_text_note_idx):{len(sorted_text_note_idx)}")
+                # note_idxs的类型是 int 类型
+                # hunpai_text_logits是按照文本模态所给的序而产生的
+                hunpai_text_logits = [note_to_logit[int(note_idx)] for note_idx in sorted_text_note_idx]
+                # hunpai_text_logits = torch.tensor(hunpai_text_logits).unsqueeze(dim=0)
+                hunpai_text_logits = torch.stack(hunpai_text_logits).unsqueeze(dim=0)
+                loss_text_kd = self.compute_listmle_loss(hunpai_text_logits)
+            else:
+                print("当前query 下没有文本模态")
+                loss_text_kd = torch.tensor(0.0, device = self.accelerator.device)
+        except Exception as e:
+            print(f"search_idx:{search_idx}天生全是图像模态")                
+            loss_text_kd = torch.tensor(0.0, device = self.accelerator.device)
 
-        # loss_fn = torch.nn.BCEWithLogitsLoss()
-        # loss = loss_fn(logits.view(-1), labels.view(-1))
+        if self.accelerator.is_local_main_process:
+            print(f"loss_text_kd:{loss_text_kd}")
+
+        # print(f"figure_inputs['input_ids'].shape:{figure_inputs['input_ids'].shape}")
+        # figure_inputs['input_ids'].shape:torch.Size([5, 512])
+
+        # 单一图像模态给的序，混排蒸馏图像模态
+        # 如果当前query下没有图像模态，没有截断也没有
+        try:
+            figure_note2logits = self.figure_label[str(search_idx)]
+            figure_note2logits = {k: v for k, v in figure_note2logits.items() if int(k) in note_idxs}
+            if len(figure_note2logits)>0:
+                sorted_figure_note_idx=[note_idx for note_idx, _ in sorted(
+                    figure_note2logits.items(),
+                    key=lambda item: item[1],  # 按score排序
+                    reverse=True               # 降序排列
+                )]
+                print(f"len(sorted_figure_note_idx):{len(sorted_figure_note_idx)}")
+                note_to_logit = dict(zip(note_idxs, logits))
+                # hunpai_figure_logits是按照图像模态所给的序而产生的
+                hunpai_figure_logits = [note_to_logit[int(note_idx)] for note_idx in sorted_figure_note_idx]
+                # hunpai_figure_logits = torch.tensor(hunpai_figure_logits).unsqueeze(dim=0)
+                hunpai_figure_logits = torch.stack(hunpai_figure_logits).unsqueeze(dim=0)
+                loss_figure_kd = self.compute_listmle_loss(hunpai_figure_logits)
+            else:
+                print("当前query 下截断后没有图像模态")
+                loss_figure_kd = torch.tensor(0.0, device = self.accelerator.device)
+        except Exception as e:
+            print(f"len(figure_inputs):{len(figure_inputs)}")
+            print(f"search_idx:{search_idx}天生全是文本模态")
+            loss_figure_kd = torch.tensor(0.0, device = self.accelerator.device)
+                    
+        if self.accelerator.is_local_main_process:
+            print(f"loss_figure_kd:{loss_figure_kd}")
+
+
+        # loss from multimidal
+        # # 混排数据集->logits->只标注各单一模态的前 10%
+        # # 单一图像模态给的序
+        # if len(figure_inputs)>0:
+        #     # 问题：figure_label没有search_idx时混排显示该search_idx下有图像模态
+        #     # 混排的search_idx有5个点了，没点的随机模态，依赖于multimodal_train_modal_index
+        #     # figure_label怎么区分模态的？ 依赖于multimodal_exp_1_modal_index
+        #     # multimodal_exp_1_modal_index是全量训练集的，multimodal_train_modal_index只是混排的，不冲突
+        #     n = len(sorted_figure_note_idx)
+        #     fig_k = round(n * self.top_p)
+        #     fig_k = max(1, fig_k)           # 确保至少取1个元素
+        #     sorted_figure_note_idx = sorted_figure_note_idx[:fig_k]
+        # else:
+        #     print(f"len(figure_inputs):{len(figure_inputs)}")
+
+        # # 单一文本模态给的序
+        # if len(text_inputs)>0:
+        #     m = len(sorted_text_note_idx)
+        #     text_k = round(m * self.top_p)
+        #     text_k = max(1, text_k)           # 确保至少取1个元素
+        #     sorted_text_note_idx = sorted_text_note_idx[:text_k]
+        # else:
+        #     print(f"len(text_inputs):{len(text_inputs)}")
+
+        # 处理图像模态数据
+        if len(figure_inputs) > 0:
+            n = len(sorted_figure_note_idx)
+            # 根据实验类型计算不同区间
+            if self.experiment_type == "top":
+                # 取前20%
+                start_idx = 0
+                end_idx = round(n * self.top_p)
+            elif self.experiment_type == "middle_1":
+
+                start_idx = round(n * self.top_p)
+                end_idx = round(2*n * self.top_p)
+            elif self.experiment_type == "middle_2":
+
+                start_idx = round(2*n * self.top_p)
+                end_idx = round(3*n * self.top_p)
+            elif self.experiment_type == "middle_3":
+
+                start_idx = round(3*n * self.top_p)
+                end_idx = round(4*n * self.top_p)
+            else:  # bottom
+                start_idx = round(n * (1 - self.top_p))
+                end_idx = n
+            
+            # 确保至少取1个元素
+            end_idx = max(start_idx + 1, end_idx)
+            # 确保end不大于总长度
+            end_idx = min(n, end_idx)
+            sorted_figure_note_idx = sorted_figure_note_idx[start_idx:end_idx]
+        else:
+            print(f"len(figure_inputs):{len(figure_inputs)}")
+
+        # 处理文本模态数据
+        if len(text_inputs) > 0:
+            m = len(sorted_text_note_idx)
+            # 根据实验类型计算不同区间
+            if self.experiment_type == "top":
+                # 取前20%
+                start_idx = 0
+                end_idx = round(m * self.top_p)
+            elif self.experiment_type == "middle_1":
+                start_idx = round(m * self.top_p)
+                end_idx = round(2*m * self.top_p)
+            elif self.experiment_type == "middle_2":
+                start_idx = round(2*m * self.top_p)
+                end_idx = round(3*m * self.top_p)
+            elif self.experiment_type == "middle_3":
+                start_idx = round(3*m * self.top_p)
+                end_idx = round(4*m * self.top_p)
+            else:  # bottom
+                start_idx = round(m * (1 - self.top_p))
+                end_idx = m
+            
+            # 确保至少取1个元素
+            end_idx = max(start_idx + 1, end_idx)
+            # 确保end不大于总长度
+            end_idx = min(m, end_idx)
+            sorted_text_note_idx = sorted_text_note_idx[start_idx:end_idx]
+        else:
+            print(f"len(text_inputs):{len(text_inputs)}")
+
+        # 混排标注损失
+        if len(text_inputs)>0 and len(figure_inputs)>0:
+            hunpai_note_idxs= sorted_figure_note_idx + sorted_text_note_idx
+            print(f"混排标注量:{len(hunpai_note_idxs)}")
+            # print(f"图像前 0.1:{sorted_figure_note_idx}")
+            # print(f"文本前 0.1:{sorted_text_note_idx}")
+
+            hunpai_logits = []
+            # logits_sortedby_label这里就是混排的 label顺序,需要把note_idxs也要恢复成 label 顺序的 notes 顺序
+            note_idxs = torch.tensor(note_idxs)
+            note_idxs_sortedby_label= note_idxs[sorted_indices]
+            # print(f"note_idxs_sortedby_label:{note_idxs_sortedby_label}")
+            # print(f"logits_sortedby_label:{logits_sortedby_label}")
+            for note_idx,logit in zip(note_idxs_sortedby_label, logits_sortedby_label):
+                if str(note_idx.item()) in hunpai_note_idxs:
+                    # print(f"note_idx:{note_idx}")
+                    hunpai_logits.append(logit)
+
+            if hunpai_logits:
+                # hunpai_logits = torch.tensor(hunpai_logits).unsqueeze(dim=0)
+                hunpai_logits = torch.stack(hunpai_logits).unsqueeze(dim=0)
+                loss_multimodal =self.compute_listmle_loss(hunpai_logits)
+            else:
+                loss_multimodal = torch.tensor(0.0, device = self.accelerator.device)
+        else:
+            loss_multimodal = torch.tensor(0.0, device = self.accelerator.device)
+        
+        if self.accelerator.is_local_main_process:
+            print(f"loss_multimodal:{loss_multimodal}")
+
+        # total loss
+        loss = loss_text_kd + loss_figure_kd + loss_multimodal
+        if self.accelerator.is_local_main_process:
+            print(f"total loss:{loss}")
 
         self.optimizer.zero_grad()
         self.accelerator.backward(loss)
@@ -1743,7 +1297,6 @@ class MultiModalTrainer(BaseTrainer):
         self.accelerator.clip_grad_norm_(self.model.parameters(), 1.0)
         self.optimizer.step()
         self.scheduler.step()
-        # self.optimizer.zero_grad()
 
         return loss
 
@@ -1809,6 +1362,7 @@ class MultiModalTrainer(BaseTrainer):
         if self.step % self.config['training']['eval_steps'] == 0 or (epoch % self.config['training']['eval_epochs'] == 0 and step==0):
             print(f"step:{self.step},epoch:{epoch},start evaluate")
             logger.info(f"step:{self.step},epoch:{epoch},start evaluate")
+            self.accelerator.wait_for_everyone()
             self.evaluate()
             # pass
 
@@ -1837,8 +1391,6 @@ class MultiModalTrainer(BaseTrainer):
 
 trainer_class = {
     'cross_encoder_trainer': CrossEncoderTrainer,
-    'dense_retrieval_trainer': DenseRetrievalTrainer,
-    'dcn_trainer': DCNTrainer,
     'vlm_trainer': VLMCrossEncoderTrainer,
     'multimodal_trainer': MultiModalTrainer
 }
@@ -1847,6 +1399,8 @@ if __name__ == "__main__":
     config_path = sys.argv[1]
     print(f"Starting Training on {config_path}")
     config = get_config(config_path)
+    config1 = get_config("config/search_cross_encoder_config.yaml")
+    config2 = get_config("config/search_vlm_config.yaml")
     time_stamp = sys.argv[2]
     if len(sys.argv) > 3:
         machine_rank = int(sys.argv[3])
@@ -1866,7 +1420,7 @@ if __name__ == "__main__":
     config['model']['lora_checkpoint_dir'] = os.path.join(project_dir, config['model']['lora_checkpoint_dir'])
     config['optimizer']['kwargs']['lr'] = float(config['optimizer']['kwargs']['lr'])
     config['optimizer']['kwargs']['eps'] = float(config['optimizer']['kwargs']['eps'])
-    trainer = trainer_class[config['trainer']](config)
+    trainer = trainer_class[config['trainer']](config,config1=config1,config2=config2)
     print(f"Starting Training")
     trainer.train()
 
