@@ -26,7 +26,7 @@ import logging
 import itertools
 
 # Configure the logging module here; any subsequent configurations will be ineffective
-logging.basicConfig(filename="/root/paddlejob/workspace/env_run/output/multimodal/logger.log",
+logging.basicConfig(filename="output/multimodal/logger.log",
                     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s-%(funcName)s',
                     level=logging.INFO,
                     filemode='w')
@@ -50,10 +50,8 @@ def dataset_class(class_name):
 class BaseTrainer:
     """Base Trainer Class"""
 
-    def __init__(self, config,config1,config2):
+    def __init__(self, config):
         self.config = config
-        self.config1 = config1
-        self.config2 = config2
         self.setup_environment()
         self.setup_tracking()
         self.setup_model()
@@ -791,7 +789,7 @@ class MultiModalTrainer(BaseTrainer):
 
     def setup_model(self):
         self._handle_previous_checkpoints()
-        self.model = MultiModalRankModel(self.config, config1=self.config1, config2=self.config2)
+        self.model = MultiModalRankModel(self.config)
         if self.accelerator.is_main_process:
             print_trainable_params_stats(self.model)
             # 单独统计并打印 classifier 的可训练参数
@@ -816,10 +814,10 @@ class MultiModalTrainer(BaseTrainer):
         """Set up data loading and evaluator"""
         self.load_training_data()
         self.build_evaluator()
-        with open("dataset/ProcessedDataset/MultiModal/ExP5/text_predictions.json") as f:
+        with open("dataset/upstream_scores/text_predictions.json") as f:
             self.text_label = json.load(f)
 
-        with open("dataset/ProcessedDataset/MultiModal/ExP5/figure_predictions.json") as f:
+        with open("dataset/upstream_scores/figure_predictions.json") as f:
             self.figure_label = json.load(f)
         
 
@@ -912,11 +910,6 @@ class MultiModalTrainer(BaseTrainer):
             disable=not self.accelerator.is_local_main_process
         )
 
-
-        # itertools.islice(..., start_step, None)：是对数据本身的切片，作用是跳过 self.train_data_loader 中前 start_step 个批次的数据，只保留从 start_step 开始到末尾的批次
-        # enumerate(..., start=start_step)：是对迭代序号的起始值设置，不影响数据本身，仅让 step 变量从 start_step 开始计数。
-        # start_step = 3990
-        # for step, batch in enumerate(itertools.islice(self.train_data_loader, start_step, None), start=start_step):
         
         for step, batch in enumerate(self.train_data_loader):
 
@@ -1043,9 +1036,6 @@ class MultiModalTrainer(BaseTrainer):
         # 4. 计算每个位置的损失项
         loss_per_position = log_cumsums - logits        # [batch_size, n_items]
         loss_per_position = loss_per_position.to(torch.float16)
-
-        # if self.accelerator.is_local_main_process:
-        #     print(f"log_cumsums:{log_cumsums}")
             
         # 5. 聚合损失
         return loss_per_position.sum(dim=1).mean() / note_nums      # 批处理平均
@@ -1134,9 +1124,6 @@ class MultiModalTrainer(BaseTrainer):
         if self.accelerator.is_local_main_process:
             print(f"loss_text_kd:{loss_text_kd}")
 
-        # print(f"figure_inputs['input_ids'].shape:{figure_inputs['input_ids'].shape}")
-        # figure_inputs['input_ids'].shape:torch.Size([5, 512])
-
         # 单一图像模态给的序，混排蒸馏图像模态
         # 如果当前query下没有图像模态，没有截断也没有
         try:
@@ -1165,31 +1152,6 @@ class MultiModalTrainer(BaseTrainer):
                     
         if self.accelerator.is_local_main_process:
             print(f"loss_figure_kd:{loss_figure_kd}")
-
-
-        # loss from multimidal
-        # # 混排数据集->logits->只标注各单一模态的前 10%
-        # # 单一图像模态给的序
-        # if len(figure_inputs)>0:
-        #     # 问题：figure_label没有search_idx时混排显示该search_idx下有图像模态
-        #     # 混排的search_idx有5个点了，没点的随机模态，依赖于multimodal_train_modal_index
-        #     # figure_label怎么区分模态的？ 依赖于multimodal_exp_1_modal_index
-        #     # multimodal_exp_1_modal_index是全量训练集的，multimodal_train_modal_index只是混排的，不冲突
-        #     n = len(sorted_figure_note_idx)
-        #     fig_k = round(n * self.top_p)
-        #     fig_k = max(1, fig_k)           # 确保至少取1个元素
-        #     sorted_figure_note_idx = sorted_figure_note_idx[:fig_k]
-        # else:
-        #     print(f"len(figure_inputs):{len(figure_inputs)}")
-
-        # # 单一文本模态给的序
-        # if len(text_inputs)>0:
-        #     m = len(sorted_text_note_idx)
-        #     text_k = round(m * self.top_p)
-        #     text_k = max(1, text_k)           # 确保至少取1个元素
-        #     sorted_text_note_idx = sorted_text_note_idx[:text_k]
-        # else:
-        #     print(f"len(text_inputs):{len(text_inputs)}")
 
         # 处理图像模态数据
         if len(figure_inputs) > 0:
@@ -1399,8 +1361,6 @@ if __name__ == "__main__":
     config_path = sys.argv[1]
     print(f"Starting Training on {config_path}")
     config = get_config(config_path)
-    config1 = get_config("config/search_cross_encoder_config.yaml")
-    config2 = get_config("config/search_vlm_config.yaml")
     time_stamp = sys.argv[2]
     if len(sys.argv) > 3:
         machine_rank = int(sys.argv[3])
@@ -1420,7 +1380,7 @@ if __name__ == "__main__":
     config['model']['lora_checkpoint_dir'] = os.path.join(project_dir, config['model']['lora_checkpoint_dir'])
     config['optimizer']['kwargs']['lr'] = float(config['optimizer']['kwargs']['lr'])
     config['optimizer']['kwargs']['eps'] = float(config['optimizer']['kwargs']['eps'])
-    trainer = trainer_class[config['trainer']](config,config1=config1,config2=config2)
+    trainer = trainer_class[config['trainer']](config)
     print(f"Starting Training")
     trainer.train()
 
