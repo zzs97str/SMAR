@@ -1,2 +1,2 @@
 # SMAR
-The source code for DuRank will be released in 3 days!
+The source code for DuRank and the Durank dataset will be released after the compliance review!
