@@ -1,0 +1,60 @@
+project_name: "search_CrossRank"
+project_dir: "search_CrossRank"
+trainer: CrossRank_multimodal_trainer
+
+# Model Configuration
+model:
+  model_name_or_path: "model/Qwen3-Reranker-4B"  # Base model
+  tokenizer_name_or_path: "model/Qwen3-Reranker-4B"  # Tokenizer
+  load_from_new: false  # Whether to load from the latest checkpoint
+  lora_checkpoint_dir: "multimodal_checkpoints/"  # LoRA checkpoint save path
+  gradient_checkpointing: true  # Enable gradient checkpointing to save GPU memory
+  load_in_4bit: false
+  use_lora: true
+
+# Dataset Configuration
+datasets:
+  dataset_name_or_path: "dataset/CrossRankData"  # Dataset path
+  train_data_processor: "CrossRankMultiModalTrainingProcessor"  # Training data processor
+  tokenizer_name_or_path: "model/Qwen3-Reranker-4B"
+  batch_size: 2  # Batch size
+  eval_batch_size: 1
+  max_length: 512  # Maximum sequence length
+  negative_samples: 1  # Number of negative samples per query
+
+# Training Configuration
+training:
+  num_epochs: 16  # Number of training epochs
+  eval_steps: 500  # Evaluation steps
+  save_steps: 500  # Save steps
+  eval_epochs: 1  # Evaluate every N epochs
+  save_epochs: 1  # Save model every N epochs
+
+# Optimizer Configuration
+optimizer: 
+  name: AdamW  # Use AdamW optimizer
+  kwargs:
+    lr: 2e-6
+    weight_decay: 0.01
+    betas: [0.9, 0.999]
+    eps: 1e-5
+
+# Learning Rate Scheduler Configuration
+scheduler:
+  name: LinearLR
+  kwargs:
+    total_iters: 100
+
+# Evaluation Configuration
+evaluation:
+  target_metric: "MRR@1"  # Target evaluation metric
+  output_dir: "eval_results"  # Evaluation results output directory
+  # qrels_data_path: "dataset/CrossRankData/CrossRank_eval_labels.csv"  
+  qrels_data_path: "dataset/CrossRankData/CrossRank_test_labels.csv"  # Evaluation data path
+  rerank_depth: 1000  # Reranking depth
+  results_key: "search_results"  # Use XHS exposure results
+  sample_num: 3000  # Number of evaluation samples, evaluate first {sample_num} samples
+
+# Logger Configuration
+logger:
+  log_with: "tensorboard"  # Use tensorboard for training log recording
