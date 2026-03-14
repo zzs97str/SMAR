@@ -38,4 +38,5 @@ The CrossRank dataset was constructed from real user interactions on real indust
 | 生人回避短剧僵尸在线观看 |              3 |              0 |              1 |              0 |              0 |              0 | 一口气 看 完 45 年 前 年 丧尸 片 开山鼻祖 《 生 人 回避 》 当 丧尸 . . . | 丧尸深海中遇见鲨鱼究竟胜筹这部1979年上映丧尸电影脑洞真绝对称得上丧尸片中开山鼻祖意大利经典丧尸片生回避一艘小船自由漂泊海面担心干扰 | 生回避                  |              0 |           0.433527 |                  0 |                  0 |                  0 |           0        |                9 |       0 |           60272 |        16885 |       1 |
 
 query_intent has 27 unique values, corresponding to {0, 1, ..., 26}.
-url_category has 5 unique values, corresponding to {0, 1, 2, 3, 4s}.
+
+url_category has 5 unique values, corresponding to {0, 1, 2, 3, 4}.
