@@ -9,8 +9,10 @@ cd /path_to_Qilin/ && bash scripts/run_Multimodal.sh
 ### code for CrossRank
 cd /path_to_CrossRank/ && bash CrossRankExperiment/run_Multimodal.sh
 
-**Below is a small sample of the CrossRank dataset. The FULL dataset will be released along with the paper.**
+### CrossRank Description:
+The CrossRank dataset was constructed from real user interactions on real industrial scenarios. It contains query data and high-quality annotations obtained through expert labeling. The dataset primarily consists of search results retrieved from different modals, with more than 250,000  results included. Each sample contains a query, the corresponding retrieved results with titles, abstracts, categorizations, upstream model scores, and human-annotated relevance, etc.
 
+**Below is a small sample of the CrossRank dataset. The FULL dataset will be released along with the paper.**
 
 | query                        |   query_intent |   query_feat_1 |   query_feat_2 |   query_feat_3 |   query_feat_4 |   query_feat_5 | real_title                                                                     | abs_basic                                                                                                                                   | title_highlight_basic   |   url_category |   candidate_feat_1 |   candidate_feat_2 |   candidate_feat_3 |   candidate_feat_4 |   candidate_feat_5 |   upstream_label |   label |   candidate_idx |   search_idx |   modal |
 |:-----------------------------|---------------:|---------------:|---------------:|---------------:|---------------:|---------------:|:-------------------------------------------------------------------------------|:--------------------------------------------------------------------------------------------------------------------------------------------|:------------------------|---------------:|-------------------:|-------------------:|-------------------:|-------------------:|-------------------:|-----------------:|--------:|----------------:|-------------:|--------:|
@@ -34,3 +36,6 @@ cd /path_to_CrossRank/ && bash CrossRankExperiment/run_Multimodal.sh
 | 璞玉澜岸花园苏州         |              1 |              0 |              1 |              2 |              2 |              0 | 路劲 璞玉 澜 岸 - 苏州 路劲 璞玉 澜岸 楼盘 详情 - 苏州 房 天下           | 楼盘概述苏州路劲璞玉澜岸,20000.00元平方米楼盘地址黄埭高新区春光路康阳路交汇处想了解更多关路劲璞玉澜岸房价户型产权                  | 璞玉澜岸苏州            |              0 |           0.523033 |                  0 |                  0 |                  0 |           0        |                8 |       3 |           91372 |        16847 |       0 |
 | 火箭的英文               |              4 |              8 |              2 |              0 |              0 |              1 | 火箭的英语                                                               | 英语语言培训语言教学火箭英语古永飞古永飞古永飞16年高中英语教龄英语专业八级拓展火箭相关短语单词解释作为动词表示猛涨意思诺博文化18   | 火箭英语                |              0 |           0.790685 |                  0 |                  1 |                  2 |           0.012286 |                9 |       2 |            8131 |        16033 |       1 |
 | 生人回避短剧僵尸在线观看 |              3 |              0 |              1 |              0 |              0 |              0 | 一口气 看 完 45 年 前 年 丧尸 片 开山鼻祖 《 生 人 回避 》 当 丧尸 . . . | 丧尸深海中遇见鲨鱼究竟胜筹这部1979年上映丧尸电影脑洞真绝对称得上丧尸片中开山鼻祖意大利经典丧尸片生回避一艘小船自由漂泊海面担心干扰 | 生回避                  |              0 |           0.433527 |                  0 |                  0 |                  0 |           0        |                9 |       0 |           60272 |        16885 |       1 |
+
+query_intent has 27 unique values, corresponding to {0, 1, ..., 26}.
+url_category has 5 unique values, corresponding to {0, 1, 2, 3, 4s}.
