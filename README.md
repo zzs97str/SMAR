@@ -11,6 +11,7 @@ cd /path_to_CrossRank/ && bash CrossRankExperiment/run_Multimodal.sh
 
 ### CrossRank Description:
 The CrossRank dataset was constructed from real user interactions on real industrial scenarios. It contains query data and high-quality annotations obtained through expert labeling. The dataset primarily consists of search results retrieved from different modals, with more than 250,000  results included. Each sample contains a query, the corresponding retrieved results with titles, abstracts, categorizations, upstream model scores, and human-annotated relevance, etc.
+
 Here are the detailed statistics:
 • Size: 76268 queries, 375238  candidate items.
 • Modality Composition: text natural results 314757 (83.9%), 60481 video results (16.1%).
