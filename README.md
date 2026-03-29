@@ -23,6 +23,7 @@ Here are the detailed statistics:
 | **2.0**     | 155199             | 17921            | 45858             | 30221             |
 | **3.0**     | 26733              | 2264             | 9581              | 2803              |
 | **4.0**     | 5092               | 2                | 1626              | 3                 |
+
 • Annotation Protocol: Datasets are annotated by our professional human annotators. Each candidate-query pair is labeled on a 5-point relevance scale (0-4). 
 • Upstream Rankers: The upstream scores are provided by two independently trained, state-of-the-art rankers for text and video respectively, which have been deployed online. The upstream label outputs of the two models range from 0 to 9.
 
