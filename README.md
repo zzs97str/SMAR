@@ -15,7 +15,8 @@ The CrossRank dataset was constructed from real user interactions on real indust
 Here are the detailed statistics:
 * Size: 76268 queries, 375238  candidate items.
 * Modality Composition: text natural results 314757 (83.9%), 60481 video results (16.1%).
-* Query-item relevance Distribution: 
+* Query-item relevance Distribution:
+  
 | human label | SingleModel Corpus | SingleModel Corpus | Multimodal Corpus | Multimodal Corpus |
 |:-----------:|:------------------:|:----------------:|:-----------------:|:-----------------:|
 |             | text modal         | video modal      | text modal        | video modal       |
