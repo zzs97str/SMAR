@@ -11,6 +11,20 @@ cd /path_to_CrossRank/ && bash CrossRankExperiment/run_Multimodal.sh
 
 ### CrossRank Description:
 The CrossRank dataset was constructed from real user interactions on real industrial scenarios. It contains query data and high-quality annotations obtained through expert labeling. The dataset primarily consists of search results retrieved from different modals, with more than 250,000  results included. Each sample contains a query, the corresponding retrieved results with titles, abstracts, categorizations, upstream model scores, and human-annotated relevance, etc.
+Here are the detailed statistics:
+• Size: 76268 queries, 375238  candidate items.
+• Modality Composition: text natural results 314757 (83.9%), 60481 video results (16.1%).
+• Query-item relevance Distribution: 
+| human label | SingleModel Corpus | SingleModel Corpus | Multimodal Corpus | Multimodal Corpus |
+|:-----------:|:------------------:|:----------------:|:-----------------:|:-----------------:|
+|             | text modal         | video modal      | text modal        | video modal       |
+| **0.0**     | 42266              | 1524             | 6186              | 3402              |
+| **1.0**     | 18792              | 754              | 3424              | 1587              |
+| **2.0**     | 155199             | 17921            | 45858             | 30221             |
+| **3.0**     | 26733              | 2264             | 9581              | 2803              |
+| **4.0**     | 5092               | 2                | 1626              | 3                 |
+• Annotation Protocol: Datasets are annotated by our professional human annotators. Each candidate-query pair is labeled on a 5-point relevance scale (0-4). 
+• Upstream Rankers: The upstream scores are provided by two independently trained, state-of-the-art rankers for text and video respectively, which have been deployed online. The upstream label outputs of the two models range from 0 to 9.
 
 **Below is a small sample of the CrossRank dataset. The FULL dataset will be released along with the paper.**
 
