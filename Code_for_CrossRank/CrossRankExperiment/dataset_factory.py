@@ -25,12 +25,11 @@ class CrossRankMultiModalTrainingProcessor:
         self.data_path = data_path
         self.batch_size = batch_size
         self.train_data_key = kwargs.get('train_data_key', 'search_train')
-        # 从 kwargs 字典中获取键 'negative_pool' 对应的值，如果该键不存在，则使用默认值 'search_result_details_with_idx'
+        # Get the value corresponding to the key 'negative_pool' from the kwargs dictionary. If the key does not exist, use the default value 'search_result_details_with_idx'
         self.negative_pool = kwargs.get('negative_pool', 'search_result_details_with_idx')
         self.load_data()
         self.tokenizer = AutoTokenizer.from_pretrained(tokenizer_name, trust_remote_code=True)
         self.query_features=['query_feat_5','query_feat_3',"query_feat_1"]
-        # 类型：
         self.statistic_features=["candidate_feat_1","candidate_feat_2","candidate_feat_3","candidate_feat_4","candidate_feat_5","upstream_label","query_feat_2","query_feat_4"]
 
     
@@ -42,9 +41,9 @@ class CrossRankMultiModalTrainingProcessor:
 
     def get_candidate_content(self,search_idx, candidate_idx, modal):
         if modal==1:
-            # 1 队列
-            # search_idx在0-24009之间属于混排标注数据
-            # 否则属于单一模态标注数据
+            # 1 Queue
+            # search_idx between 0 and 24009 belongs to mixed modality annotation data
+            # Otherwise, it belongs to single modality annotation data
             if search_idx <= 24009:
                 candidate = self.corpus[candidate_idx]
             else:
@@ -79,7 +78,7 @@ class CrossRankMultiModalTrainingProcessor:
             }
 
         elif modal==0:
-            # 0 队列
+            # 0 Queue
             if search_idx <= 24009:
                 candidate = self.corpus[candidate_idx]
             else:
@@ -124,13 +123,13 @@ class CrossRankMultiModalTrainingProcessor:
         return ret
 
     def collate_fn(self, batch):
-        # 收集三元组
+        # Collect triples
         query_candidate_list = []
         labels = []
         search_idxs=[]
         candidate_idxs=[]
         modal_indexs= []
-        # 收集原始特征值
+        # Collect original feature values
         batch_query_features = {feat: [] for feat in self.query_features}
         batch_statistic_features = {feat: [] for feat in self.statistic_features}
 
@@ -144,32 +143,32 @@ class CrossRankMultiModalTrainingProcessor:
             impression_result_details = item[self.negative_pool]
             search_idx = item["search_idx"]
 
-            #listwise 输入，输入是一个列表，输出一个分数
-            # 输入：用户query+<用户特征>+候选列表[结果1,结果2,...,结果n]+[结果统计特征]
+            # listwise input, input is a list, output a score
+            # Input: user query + <user features> + candidate list [result1, result2, ..., resultn] + [result statistical features]
 
-            # 正样本池：click==1，按 page_time 降序
+            # Positive sample pool: click == 1, sorted in descending order by page_time
             candidate_pool = [d for d in impression_result_details]
 
-            # 计算正样本总数
+            # Calculate total number of positive samples
             num_candidate = len(candidate_pool)
-            # 可能有多个正例
+            # Multiple positive examples may exist
             if num_candidate == 0:
                 raise ValueError("No candidate samples found")
 
-            # 随机打乱顺序
+            # Random shuffle order
             random.shuffle(candidate_pool)
 
-            # === 新增：局部 label 映射（每个 query 内 label 连续且唯一）===
+            # Local label mapping (labels are consecutive and unique within each query)
             local_labels_raw = [cand["position"] for cand in candidate_pool]
 
-            # === 检查同一 search_idx 内是否重复（可选）===
+            # Check for duplicates within the same search_idx (optional)
             if len(local_labels_raw) != len(set(local_labels_raw)):
                 raise ValueError(f"search_idx={search_idx} 内 label 存在重复: {local_labels_raw}")
 
 
             for candidate in candidate_pool:
                 search_idxs.append(search_idx)
-                # candidate形如:{'upstream_label': 0.98092, 'candidate_idx': 2, 'candidate_feat_5': 0.0, 'candidate_feat_4': 0.0, 'label': 3.0, 'position': 0}
+                # candidate form: {'upstream_label': 0.98092, 'candidate_idx': 2, 'candidate_feat_5': 0.0, 'candidate_feat_4': 0.0, 'label': 3.0, 'position': 0}
                 candidate_idx = candidate['candidate_idx']
                 candidate_idxs.append(candidate_idx)
                 if search_idx <= 24009:
@@ -191,13 +190,13 @@ class CrossRankMultiModalTrainingProcessor:
                 label = candidate["position"]
                 labels.append(label)
 
-                #q 侧特征
+                # Query side features
                 for feat in self.query_features:
                     assert len(self.query_features)==len(batch_query_features),"query_features 和 batch_query_features 长度不一致"
                     cand_features = self.get_cand_feat(feat, candidate_idx,search_idx)
-                    # cand_features 转化为整数
+                    # Convert cand_features to integer
                     cand_features = int(cand_features)
-                    # 转化为二进制
+                    # Convert to binary
                     if feat == "query_feat_5":
                         total_bits= 2
                     elif feat == "query_feat_3":
@@ -210,7 +209,7 @@ class CrossRankMultiModalTrainingProcessor:
 
                     batch_query_features[feat].append(cand_features)
 
-                #candidate 侧特征
+                # Candidate side features
                 for feat in self.statistic_features:
                     cand_features = self.get_cand_feat(feat, candidate_idx,search_idx)
                     assert len(self.statistic_features)==len(batch_statistic_features),"statistic_features 和 batch_statistic_features 长度不一致"
@@ -221,9 +220,9 @@ class CrossRankMultiModalTrainingProcessor:
                         cand_features = torch.tensor(binary_list, dtype=torch.float16) 
                         batch_statistic_features[feat].append(cand_features)
                     else:
-                        # cand_features 转化为整数
+                        # Convert cand_features to integer
                         cand_features = int(cand_features)
-                        # 转化为二进制
+                        # Convert to binary
                         if feat in ["candidate_feat_4","candidate_feat_3","candidate_feat_2","query_feat_2"]:
                             total_bits= 4
                         elif feat in ["query_feat_4"]:
@@ -286,15 +285,14 @@ class CrossRankMultiModalTestProcessor(CrossRankMultiModalTrainingProcessor):
         self.num_processes = num_processes
         self.dataset = self.load_data()
         self.query_features=['query_feat_5','query_feat_3',"query_feat_1"]
-        # 类型：
         self.statistic_features=["candidate_feat_1","candidate_feat_2","candidate_feat_3","candidate_feat_4","candidate_feat_5","upstream_label","query_feat_2","query_feat_4"]
      
 
     def load_data(self):
         self.corpus = load_dataset("parquet",data_files="dataset/CrossRankData/MultiModalCorpus.parquet", split="train")
-        # 测试
+        # Test set
         data = load_dataset("parquet",data_files="dataset/CrossRankData/Multimodal_Test.parquet", split="train")
-        # 验证
+        # Evaluation set
         # data = load_dataset("parquet",data_files="dataset/CrossRankData/Multimodal_Eval.parquet", split="train")
         data = data.select(range(min(self.sample_num, len(data))))
         data = data.shard(num_shards=self.num_processes, index=self.local_rank, contiguous=True)
@@ -312,7 +310,7 @@ class CrossRankMultiModalTestProcessor(CrossRankMultiModalTrainingProcessor):
         search_idxs = []
         modal_indexs = []
         query_candidate_list = []
-        # 收集原始特征值
+        # Collect original feature values
         batch_query_features = {feat: [] for feat in self.query_features}
         batch_statistic_features = {feat: [] for feat in self.statistic_features}
 
@@ -332,7 +330,7 @@ class CrossRankMultiModalTestProcessor(CrossRankMultiModalTrainingProcessor):
                 candidates = candidates[:self.rerank_depth]
             search_result_details_with_idx = item["search_result_details_with_idx"]
 
-            # 随机打乱顺序
+            # Random shuffle order
             random.shuffle(search_result_details_with_idx)
 
             for i, candidate in enumerate(search_result_details_with_idx):
@@ -356,13 +354,13 @@ class CrossRankMultiModalTestProcessor(CrossRankMultiModalTrainingProcessor):
                 candidate_idxs.append(candidate_idx)
                 search_idxs.append(search_idx)
 
-                #q 侧特征
+                # Query side features
                 for feat in self.query_features:
                     assert len(self.query_features)==len(batch_query_features),"query_features 和 batch_query_features 长度不一致"
                     cand_features = self.get_cand_feat(feat, candidate_idx,search_idx)
-                    # cand_features 转化为整数
+                    # Convert cand_features to integer
                     cand_features = int(cand_features)
-                    # 转化为二进制
+                    # Convert to binary
                     if feat == "query_feat_5":
                         total_bits= 2
                     elif feat == "query_feat_3":
@@ -375,7 +373,7 @@ class CrossRankMultiModalTestProcessor(CrossRankMultiModalTrainingProcessor):
 
                     batch_query_features[feat].append(cand_features)
 
-                #candidate 侧特征
+                # Candidate side features
                 for feat in self.statistic_features:
                     cand_features = self.get_cand_feat(feat, candidate_idx,search_idx)
                     assert len(self.statistic_features)==len(batch_statistic_features),"statistic_features 和 batch_statistic_features 长度不一致"
@@ -386,9 +384,9 @@ class CrossRankMultiModalTestProcessor(CrossRankMultiModalTrainingProcessor):
                         cand_features = torch.tensor(binary_list, dtype=torch.float16) 
                         batch_statistic_features[feat].append(cand_features)
                     else:
-                        # cand_features 转化为整数
+                        # Convert cand_features to integer
                         cand_features = int(cand_features)
-                        # 转化为二进制
+                        # Convert to binary
                         if feat in ["candidate_feat_4","candidate_feat_3","candidate_feat_2","query_feat_2"]:
                             total_bits= 4
                         elif feat in ["query_feat_4"]:

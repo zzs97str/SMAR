@@ -18,7 +18,7 @@ CONFIG_FILE=config/search_multimodal_rank_config.yaml
 VALID_CUDA_DEVICES="0,1"
 echo "VALID_CUDA_DEVICES:$VALID_CUDA_DEVICES"
 export CUDA_VISIBLE_DEVICES=${VALID_CUDA_DEVICES}
-unset LD_LIBRARY_PATH # 取消cudnn的环境变量，用 pytorch 自带的
+unset LD_LIBRARY_PATH # Unset cudnn environment variable, use the one built into PyTorch
 
 NODE_RANK=${NODE_RANK:-0}  # Default to 0 if not provided
 num_machines=${num_machines:-1}  # Default to 1 if not provided
@@ -43,7 +43,7 @@ if [[ ${num_machines} -eq 1 ]]; then
     # Function to check if port is occupied
     is_port_in_use() {
         lsof -i:"$1" > /dev/null 2>&1
-        # 返回上一条命令 (lsof) 的退出状态码
+        # Return the exit status code of the previous command (lsof)
         return $?
     }
 
@@ -55,7 +55,7 @@ if [[ ${num_machines} -eq 1 ]]; then
     echo "Using available port: $port"
 
     # # Single machine training command
-    echo "注意python -m accelerate.commands.launch"
+    echo "NOTE: python -m accelerate.commands.launch"
     env CUDA_HOME=$CUDA_HOME LD_LIBRARY_PATH=$LD_LIBRARY_PATH PATH=$PATH \
     python -m accelerate.commands.launch \
         --multi_gpu \
@@ -63,7 +63,7 @@ if [[ ${num_machines} -eq 1 ]]; then
         --config_file config/default_config.yaml \
         src/trainer.py ${CONFIG_FILE} ${TIME_STAMP} \
         | tee ${log_dir}/train.log
-        # 将训练脚本的输出同时显示在终端并写入日志文件。
+        # Display the output of the training script in the terminal and write it to the log file simultaneously.
 
 else
     # Multi-machine training setup

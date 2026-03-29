@@ -112,7 +112,7 @@ class BaseTrainer:
             {'params': [p for p in self.model.fusion_module.parameters() if p.requires_grad], 'lr': optimizer_config['kwargs']['lr']},
             ]
 
-        # 创建优化器时传入参数分组
+        # Pass parameter groups when creating the optimizer
         self.optimizer = optimizer_class[optimizer_name](
             Multimodal_params, 
             **optimizer_config['kwargs']
@@ -168,11 +168,11 @@ class CrossEncoderTrainer(BaseTrainer):
 
     def setup_model(self):
         self._handle_previous_checkpoints()
-        # 暂时不要用以前的checkpoints
+        # Temporarily do not use previous checkpoints
         self.model = CrossEncoderModel(self.config)
         if self.accelerator.is_main_process:
             print_trainable_params_stats(self.model.model)
-            # 单独统计并打印 classifier 的可训练参数
+            # Calculate and print trainable parameters of the classifier separately
             classifier_trainable_params = sum(p.numel() for p in self.model.classifier.parameters() if p.requires_grad)
             print(f"Trainable parameters in classifier: {classifier_trainable_params}")
             encoders_trainable_params = sum(p.numel() for p in self.model.binary_encoders.parameters() if p.requires_grad)
@@ -290,22 +290,22 @@ class CrossEncoderTrainer(BaseTrainer):
         )
 
         for step, batch in enumerate(self.train_data_loader):
-            # step为1时打印batch的输入和label
+            # Print the input and label of the batch when step is 1
 
             # if step == 1 and self.accelerator.is_local_main_process:
-            #     # 打印前三个数据的输入和标签（每个 batch 中的前三个）
+            #     # Print the input and labels of the first 3 data items (first 3 in each batch)
             #     print(f"训练时inp_pos (first 3):")
-            #     # 设置 NumPy 打印选项，避免截断大数组
+            #     # Set NumPy print options to avoid truncating large arrays
             #     np.set_printoptions(threshold=np.inf)
-            #     # 使用 pprint 格式化输出，并只打印前三个输入
+            #     # Use pprint to format output and print only the first 3 inputs
             #     pprint(batch['inp_pos'][:3])
                 
             #     print(f"训练时inp_neg (first 3):")
             #     np.set_printoptions(threshold=np.inf)
-            #     # 使用 pprint 格式化输出，并只打印前三个标签
+            #     # Use pprint to format output and print only the first 3 labels
             #     pprint(batch['inp_neg'][:3])
             if step ==1:
-            # 调试时可打印各参数组的实际学习率
+            # Print the actual learning rate of each parameter group during debugging
                 for group in self.optimizer.param_groups:
                     print(f"Params: {len(group['params'])}, LR: {group['lr']}")
 
@@ -340,7 +340,7 @@ class CrossEncoderTrainer(BaseTrainer):
         # Backward pass
         self.accelerator.backward(loss)
 
-        # lora，模型参数都没有梯度
+        # lora, model parameters have no gradients
         # for name, param in self.model.named_parameters():
         #     if param.grad is None:
         #         print(name)
@@ -356,7 +356,7 @@ class CrossEncoderTrainer(BaseTrainer):
         self.model.train()
         self.model=  self.model.to(self.accelerator.device)
 
-        # 1. 分别取出正、负对的输入，并搬到设备上
+        # 1. Get the inputs of positive and negative pairs separately and move them to the device
         inp_pos = {k: v.to(self.accelerator.device) for k, v in batch["inp_pos"].items()}
         inp_neg = {k: v.to(self.accelerator.device) for k, v in batch["inp_neg"].items()}
         batch_features={k: [singleV.to(self.accelerator.device) for singleV in v] for k,v in batch["features"].items() }
@@ -366,7 +366,7 @@ class CrossEncoderTrainer(BaseTrainer):
             print(f"inp_pos['input_ids'].shape:{inp_pos['input_ids'].shape}")
             print(f"inp_neg['input_ids'].shape:{inp_neg['input_ids'].shape}")
 
-        # 2. 合并正负样本，防止正负样本前向传播模型两次，会影响梯度反传
+        # 2. Combine positive and negative samples to prevent forward propagation of the model twice, which will affect gradient backpropagation
         combined_input_ids = torch.cat([inp_pos["input_ids"], inp_neg["input_ids"]], dim=0)
         combined_attention_mask = torch.cat([inp_pos["attention_mask"], inp_neg["attention_mask"]], dim=0)
         combined_token_type_ids = torch.cat([inp_pos["token_type_ids"], inp_neg["token_type_ids"]], dim=0)     
@@ -375,32 +375,32 @@ class CrossEncoderTrainer(BaseTrainer):
             "attention_mask": combined_attention_mask,
             "token_type_ids": combined_token_type_ids
         }
-        # 2. 前向计算：分别得到正例和负例的 logits
-        # combined_inputs.shape:  [num_1+num_2,seq_len],num_1为正样本的个数 与 num_2 负样本的个数相等
+        # 2. Forward calculation: get the logits of positive and negative examples respectively
+        # combined_inputs.shape:  [num_1+num_2,seq_len], num_1 is the number of positive samples equal to num_2 the number of negative samples
         logits = self.model(batch_features=batch_features,user_feat=user_feat, **combined_inputs)
         # logits.shape:  [num_1+num_2,1]
-        logits = logits.view(-1)  # 假设输出logits
+        logits = logits.view(-1)  # Assume output logits
         # logits.shape:  [num_1+num_2]
         
         batch_size = inp_pos["input_ids"].shape[0]
-        # batch_size:  [num_1] 这里实际上不是 batch size       
+        # batch_size:  [num_1] This is not actually the batch size       
         logits_pos = logits[:batch_size]
         # logits_pos.shape: [num_1]
         logits_neg = logits[batch_size:]
         # logits_neg.shape: [num_2]
 
-        # 3. 计算 Hinge Loss
-        # 我们希望 logits_pos - logits_neg >= margin
+        # 3. Calculate Hinge Loss
+        # We want logits_pos - logits_neg >= margin
         margin = 1
         loss = torch.clamp(margin - (logits_pos - logits_neg), min=0).mean()
 
-        # 4. 反向传播与优化
+        # 4. Backpropagation and optimization
         self.optimizer.zero_grad()
         self.accelerator.backward(loss)
         for name, param in self.model.named_parameters():
             if param.requires_grad and param.grad is None:
                 print(f"[No grad] {name}")
-        # 梯度裁剪
+        # Gradient clipping
         self.accelerator.clip_grad_norm_(self.model.parameters(), 1.0)
         self.optimizer.step()
         self.scheduler.step()
@@ -450,7 +450,7 @@ class CrossEncoderTrainer(BaseTrainer):
     def save_checkpoint(self, suffix='', is_best=True):
         """Save checkpoint"""
         save_paths = self._get_save_paths(suffix)
-        #  用于解除分布式训练框架（如 accelerate）对模型的包装，获取原始模型。
+        #  Used to unwrap the model from the distributed training framework (e.g. accelerate) to get the original model.
         model = self.accelerator.unwrap_model(self.model)
         model.save_pretrained(save_paths['lora'])
 
@@ -493,7 +493,7 @@ class VLMCrossEncoderTrainer(BaseTrainer):
         self.model = VLMCrossEncoderModel(self.config)
         if self.accelerator.is_main_process:
             print_trainable_params_stats(self.model)
-            # 单独统计并打印 classifier 的可训练参数
+            # Calculate and print trainable parameters of the classifier separately
             classifier_trainable_params = sum(p.numel() for p in self.model.classifier.parameters() if p.requires_grad)
             print(f"Trainable parameters in classifier: {classifier_trainable_params}")
             encoders_trainable_params = sum(p.numel() for p in self.model.binary_encoders.parameters() if p.requires_grad)
@@ -619,13 +619,13 @@ class VLMCrossEncoderTrainer(BaseTrainer):
         # inputs = batch['inputs']
         # labels = batch['labels']
 
-        # 1. 分别取出正、负对的输入，并搬到设备上
+        # 1. Get the inputs of positive and negative pairs separately and move them to the device
         inp_pos = {k: v.to(self.accelerator.device) for k, v in batch["inp_pos"].items()}
         inp_neg = {k: v.to(self.accelerator.device) for k, v in batch["inp_neg"].items()}
         batch_features={k: [singleV.to(self.accelerator.device).to(torch.float16) for singleV in v] for k,v in batch["features"].items() }
         user_feat = {k: [singleV.to(self.accelerator.device).to(torch.float16) for singleV in v] for k,v in batch["user_feat"].items() }
 
-        # 2. 合并正负样本，防止正负样本前向传播模型两次，会影响梯度反传
+        # 2. Combine positive and negative samples to prevent forward propagation of the model twice, which will affect gradient backpropagation
         combined_input_ids = torch.cat([inp_pos["input_ids"], inp_neg["input_ids"]], dim=0)
         combined_attention_mask = torch.cat([inp_pos["attention_mask"], inp_neg["attention_mask"]], dim=0)    
         combined_inputs = {
@@ -636,18 +636,18 @@ class VLMCrossEncoderTrainer(BaseTrainer):
         self.model=self.model.to(torch.float16)
 
         logits = self.model(batch_features=batch_features,user_feat=user_feat, **combined_inputs)
-        logits = logits.view(-1)  # 假设输出logits
+        logits = logits.view(-1)  # Assume output logits
         # logits.shape:  [num_1+num_2]
         
         batch_size = inp_pos["input_ids"].shape[0]
-        # batch_size:  [num_1] 这里实际上不是 batch size       
+        # batch_size:  [num_1] This is not actually the batch size       
         logits_pos = logits[:batch_size]
         # logits_pos.shape: [num_1]
         logits_neg = logits[batch_size:]
         # logits_neg.shape: [num_2]
 
-        # 3. 计算 Hinge Loss
-        # 我们希望 logits_pos - logits_neg >= margin
+        # 3. Calculate Hinge Loss
+        # We want logits_pos - logits_neg >= margin
         margin = 1
         loss = torch.clamp(margin - (logits_pos - logits_neg), min=0).mean()
 
@@ -659,7 +659,7 @@ class VLMCrossEncoderTrainer(BaseTrainer):
         for name, param in self.model.named_parameters():
             if param.requires_grad and param.grad is None:
                 print(f"[No grad] {name}")
-        # 梯度裁剪
+        # Gradient clipping
         self.accelerator.clip_grad_norm_(self.model.parameters(), 1.0)
         self.optimizer.step()
         self.scheduler.step()
@@ -751,36 +751,36 @@ class VLMCrossEncoderTrainer(BaseTrainer):
 
 def get_top_p_notes(data, search_idx, p):
     """
-    从给定的search_idx中返回得分前p的note_idx
+    Return the note_idx of the top p scores from the given search_idx
     
-    参数:
-    data: 原始JSON数据（已解析为字典）
-    search_idx: 要查询的search索引
-    p: 0~1之间的比例，表示要返回前p的note
+    Parameters:
+    data: Raw JSON data (parsed into a dictionary)
+    search_idx: The search index to query
+    p: A ratio between 0 and 1, indicating the top p notes to return
     
-    返回:
-    得分前p的note_idx列表，按得分从高到低排序
+    Returns:
+    List of note_idx with the top p scores, sorted from highest to lowest score
     """
-    # 检查search_idx是否存在于数据中
+    # Check if search_idx exists in the data
     if search_idx not in data:
         return []
     
-    # 获取该search_idx下的所有note及其得分
+    # Get all notes and their scores under this search_idx
     note_scores = data[search_idx]
     
-    # 将note按得分从高到低排序
+    # Sort notes by score from highest to lowest
     sorted_notes = sorted(note_scores.items(), key=lambda x: x[1], reverse=True)
     
-    # 计算需要返回的数量
+    # Calculate the number to return
     total = len(sorted_notes)
     if total == 0:
         return []
     
-    # 计算要返回的数量（向上取整）
-    count = max(1, int(round(total * p)))  # 确保至少返回1个
-    count = min(count, total)  # 不超过总数量
+    # Calculate the number to return (round up)
+    count = max(1, int(round(total * p)))  # Ensure at least 1 is returned
+    count = min(count, total)  # Do not exceed the total number
     
-    # 返回前count个note的索引
+    # Return the indexes of the first count notes
     return [note[0] for note in sorted_notes[:count]]
 
 
@@ -792,7 +792,7 @@ class MultiModalTrainer(BaseTrainer):
         self.model = MultiModalRankModel(self.config)
         if self.accelerator.is_main_process:
             print_trainable_params_stats(self.model)
-            # 单独统计并打印 classifier 的可训练参数
+            # Calculate and print trainable parameters of the classifier separately
             # classifier_trainable_params = sum(p.numel() for p in self.model.classifier.parameters() if p.requires_grad)
             # print(f"Trainable parameters in classifier: {classifier_trainable_params}")
             # encoders_trainable_params = sum(p.numel() for p in self.model.binary_encoders.parameters() if p.requires_grad)
@@ -800,13 +800,13 @@ class MultiModalTrainer(BaseTrainer):
             # encoders_trainable_params = sum(p.numel() for p in self.model.user_binary_encoders.parameters() if p.requires_grad)
             # print(f"Trainable parameters in user_binary_encoders: {encoders_trainable_params}")
         
-        # 标注策略:取各模态前 30% 的数据进行标注
+        # Labeling strategy: take the top 30% of data for each modality for labeling
         # self.top_p = 0.3
         # print(f"self.top_p:{self.top_p}") 
 
-        # 标注策略: 根据实验类型选择不同区间的数据
-        self.experiment_type = "middle_1"  # 可选值: "top", "middle_1", "middle_2", "middle_3", "bottom"
-        self.top_p = 0.2  # 保持0.3不变，用于计算30%的比例
+        # Labeling strategy: select data from different intervals according to the experiment type
+        self.experiment_type = "middle_1"  # Optional values: "top", "middle_1", "middle_2", "middle_3", "bottom"
+        self.top_p = 0.2  # Keep 0.3 unchanged, used to calculate the 30% ratio
 
         print(f"实验类型: {self.experiment_type}, 比例: {self.top_p}")
 
@@ -951,15 +951,15 @@ class MultiModalTrainer(BaseTrainer):
         self.model.train()
         # self.accelerator.unwrap_model(self.model).model.enable_input_require_grads()
 
-        # Listwise训练
+        # Listwise training
 
-        # 1. 分别取出正、负对的输入，并搬到设备上
+        # 1. Get the inputs of positive and negative pairs separately and move them to the device
         inp_pos = {k: v.to(self.accelerator.device) for k, v in batch["inp_pos"].items()}
         inp_neg = {k: v.to(self.accelerator.device) for k, v in batch["inp_neg"].items()}
         batch_features={k: [singleV.to(self.accelerator.device) for singleV in v] for k,v in batch["features"].items() }
         user_feat = {k: [singleV.to(self.accelerator.device) for singleV in v] for k,v in batch["user_feat"].items() }
 
-        # 2. 合并正负样本，防止正负样本前向传播模型两次，会影响梯度反传
+        # 2. Combine positive and negative samples to prevent forward propagation of the model twice, which will affect gradient backpropagation
         combined_input_ids = torch.cat([inp_pos["input_ids"], inp_neg["input_ids"]], dim=0)
         combined_attention_mask = torch.cat([inp_pos["attention_mask"], inp_neg["attention_mask"]], dim=0)    
         combined_inputs = {
@@ -968,18 +968,18 @@ class MultiModalTrainer(BaseTrainer):
         }
 
         logits = self.model(batch_features=batch_features,user_feat=user_feat, **combined_inputs)
-        logits = logits.view(-1)  # 假设输出logits
+        logits = logits.view(-1)  # Assume output logits
         # logits.shape:  [num_1+num_2]
         
         batch_size = inp_pos["input_ids"].shape[0]
-        # batch_size:  [num_1] 这里实际上不是 batch size       
+        # batch_size:  [num_1] This is not actually the batch size       
         logits_pos = logits[:batch_size]
         # logits_pos.shape: [num_1]
         logits_neg = logits[batch_size:]
         # logits_neg.shape: [num_2]
 
-        # 3. 计算 Hinge Loss
-        # 我们希望 logits_pos - logits_neg >= margin
+        # 3. Calculate Hinge Loss
+        # We want logits_pos - logits_neg >= margin
         margin = 0.5
         loss = torch.clamp(margin - (logits_pos - logits_neg), min=0).mean()
 
@@ -997,74 +997,74 @@ class MultiModalTrainer(BaseTrainer):
 
     def compute_listmle_loss(self, logits): 
         """
-        参数说明：
-        logits : 模型输出的原始分数 [batch_size, n_items]
+        Parameter description:
+        logits : Raw scores output by the model [batch_size, n_items]
         
-        返回：
-        ListMLE损失值
+        Returns:
+        ListMLE loss value
         """
 
-        #确保logits缩放到[-8, 8]
-        logits = logits - logits.max(dim=1, keepdim=True).values  # 稳定性平移
+        # Ensure logits are scaled to [-8, 8]
+        logits = logits - logits.max(dim=1, keepdim=True).values  # Stability shift
         # if self.accelerator.is_local_main_process:
         #     print(f"平移后logits:{logits}")
         scale =1.0
         logits = scale * torch.tanh(logits / scale)
-        #tanh函数超过（-2,2）区间函数值变化不大
+        # The tanh function does not change much beyond the (-2, 2) interval
 
         # if self.accelerator.is_local_main_process:
         #     print(f"放缩后logits:{logits}")
         assert not torch.isnan(logits).any(), "Logits contains NaN"
         assert not torch.isinf(logits).any(), "Logits contains Inf"
 
-        # 确保输入为float类型
+        # Ensure the input is of float type
         logits = logits.float()
         
         note_nums=logits.shape[1]
 
-        # 1. 计算指数值
+        # 1. Calculate exponential values
         exp_logits = torch.exp(logits)  # [batch_size, n_items]
         
-        # 2. 反向累积和计算（从右向左）
-        reversed_exp = torch.flip(exp_logits, dims=[1])  # 反转第二个维度，倒数第一排到第一
-        cumsums = torch.cumsum(reversed_exp, dim=1)      # 累积和 [batch_size, n_items]
-        cumsums = torch.flip(cumsums, dims=[1])          # 反转回原始顺序
+        # 2. Reverse cumulative sum calculation (from right to left)
+        reversed_exp = torch.flip(exp_logits, dims=[1])  # Reverse the second dimension, last to first
+        cumsums = torch.cumsum(reversed_exp, dim=1)      # Cumulative sum [batch_size, n_items]
+        cumsums = torch.flip(cumsums, dims=[1])          # Reverse back to original order
         
-        # 3. 计算对数累积和
-        log_cumsums = torch.log(cumsums + 1e-5)        # 防止log(0)
+        # 3. Calculate log cumulative sum
+        log_cumsums = torch.log(cumsums + 1e-5)        # Prevent log(0)
         
-        # 4. 计算每个位置的损失项
+        # 4. Calculate loss items for each position
         loss_per_position = log_cumsums - logits        # [batch_size, n_items]
         loss_per_position = loss_per_position.to(torch.float16)
             
-        # 5. 聚合损失
-        return loss_per_position.sum(dim=1).mean() / note_nums      # 批处理平均
+        # 5. Aggregate loss
+        return loss_per_position.sum(dim=1).mean() / note_nums      # Batch average
 
 
     def _train_step_Multimodal(self, batch):
         """Train one step"""
         self.model.train()
 
-        # Listwise训练
+        # Listwise training
         inputs = {k: v.to(self.accelerator.device) for k, v in batch["inputs"].items()}
         search_idxs = batch["search_idxs"]
         assert len(search_idxs)==1, "search_idxs长度不为1,search_idxs:{search_idxs}"
         search_idx = search_idxs[0]
         # print(f"search_idx:{search_idx}")
         note_idxs = batch["note_idxs"]
-        # 这里的note_idxs包含所有模态的 notes，但是有截断，而单一模态中没有截断，因此要筛选
+        # The note_idxs here include notes of all modalities, but are truncated, while there is no truncation in a single modality, so filtering is required
         labels = torch.tensor(batch["labels"])
         # trainer labels:[0,5,3,1,2,4,6,7,8,9,10]
-        # argsort：按升序排列后，排好的值在原来列表中的索引
+        # argsort: After sorting in ascending order, the index of the sorted value in the original list
         sorted_indices = torch.argsort(labels)
-        # modal_indexs的顺序是经过 shufle后的顺序
+        # The order of modal_indexs is the order after shuffling
         modal_indexs = batch["modal_indexs"]
-        # 根据 模态 拆分 文本模态和图像模态的输入，0 为文本，1 为图像
+        # Split the inputs of text and image modalities according to modality, 0 for text, 1 for image
         text_inputs={}
         figure_inputs={}
         assert len(modal_indexs) == inputs["input_ids"].shape[0], "modal_indexs 与 input_ids batch size 不一致"
 
-        # 这里的text_inputs和figure_inputs显示了原始混排数据中当前 query 下有多少不同模态的 notes
+        # The text_inputs and figure_inputs here show how many notes of different modalities are under the current query in the original shuffled data
         for index, modal in enumerate(modal_indexs):
             if modal==0:
                 for k, v in batch["text_inputs"].items():
@@ -1076,7 +1076,7 @@ class MultiModalTrainer(BaseTrainer):
                 print(f"type(modal):type(modal)")
                 raise ValueError("模态不对")
 
-        # 混排listwise
+        # Shuffled listwise
         batch_features={k: [singleV.to(self.accelerator.device) for singleV in v] for k,v in batch["batch_features"].items() }
         user_feat = {k: [singleV.to(self.accelerator.device) for singleV in v] for k,v in batch["user_feat"].items() }
         assert not torch.isnan(inputs["input_ids"]).any(), "Input contains NaN"
@@ -1084,32 +1084,32 @@ class MultiModalTrainer(BaseTrainer):
         logits = self.model(batch_features=batch_features,user_feat=user_feat, **inputs)
         # print(f"multimodal logits shape:{logits.shape}")
         # multimodal logits shape:torch.Size([14, 1])
-        logits = logits.squeeze(dim=-1)  # view(-1) 的作用：将张量展平为 1D
+        logits = logits.squeeze(dim=-1)  # view(-1) function: flatten the tensor to 1D
         assert len(modal_indexs) == len(logits), "modal_indexs 和 logits 长度不匹配！"
-        # 按照 label 的顺序对混排的 logits 进行排序
+        # Sort the shuffled logits according to the order of labels
         logits_sortedby_label = logits[sorted_indices]
 
 
-        # 将数据喂给单一模态模型前向传播,logits的顺序按照打乱后相应模态的顺序
+        # Feed the data to the single modality model for forward propagation, the order of logits is the order of the corresponding modality after shuffling
         # print(f"text_inputs['input_ids'].shape:{text_inputs['input_ids'].shape}")
         # text_inputs['input_ids'].shape:torch.Size([9, 321])
 
-        # text_logits的顺序是 shuffle 后的顺序
-        # 单一文本模态给的序，混排蒸馏文本模态
+        # The order of text_logits is the order after shuffling
+        # The order given by the single text modality, shuffled distillation text modality
         try:
             text_note2logits = self.text_label[str(search_idx)]
             text_note2logits = {k: v for k, v in text_note2logits.items() if int(k) in note_idxs}
             if len(text_note2logits)>0:
                 sorted_text_note_idx=[note_idx for note_idx, _ in sorted(
                     text_note2logits.items(),
-                    key=lambda item: item[1],  # 按score排序
-                    reverse=True               # 降序排列
+                    key=lambda item: item[1],  # Sort by score
+                    reverse=True               # Descending order
                 )]
                 assert len(note_idxs)==len(logits),"note_idxs和logits不是一一对应的,有问题"
                 note_to_logit = dict(zip(note_idxs, logits))
                 print(f"len(sorted_text_note_idx):{len(sorted_text_note_idx)}")
-                # note_idxs的类型是 int 类型
-                # hunpai_text_logits是按照文本模态所给的序而产生的
+                # The type of note_idxs is int
+                # hunpai_text_logits are generated according to the order given by the text modality
                 hunpai_text_logits = [note_to_logit[int(note_idx)] for note_idx in sorted_text_note_idx]
                 # hunpai_text_logits = torch.tensor(hunpai_text_logits).unsqueeze(dim=0)
                 hunpai_text_logits = torch.stack(hunpai_text_logits).unsqueeze(dim=0)
@@ -1124,20 +1124,20 @@ class MultiModalTrainer(BaseTrainer):
         if self.accelerator.is_local_main_process:
             print(f"loss_text_kd:{loss_text_kd}")
 
-        # 单一图像模态给的序，混排蒸馏图像模态
-        # 如果当前query下没有图像模态，没有截断也没有
+        # The order given by the single image modality, shuffled distillation image modality
+        # If there is no image modality under the current query, there is no truncation
         try:
             figure_note2logits = self.figure_label[str(search_idx)]
             figure_note2logits = {k: v for k, v in figure_note2logits.items() if int(k) in note_idxs}
             if len(figure_note2logits)>0:
                 sorted_figure_note_idx=[note_idx for note_idx, _ in sorted(
                     figure_note2logits.items(),
-                    key=lambda item: item[1],  # 按score排序
-                    reverse=True               # 降序排列
+                    key=lambda item: item[1],  # Sort by score
+                    reverse=True               # Descending order
                 )]
                 print(f"len(sorted_figure_note_idx):{len(sorted_figure_note_idx)}")
                 note_to_logit = dict(zip(note_idxs, logits))
-                # hunpai_figure_logits是按照图像模态所给的序而产生的
+                # hunpai_figure_logits are generated according to the order given by the image modality
                 hunpai_figure_logits = [note_to_logit[int(note_idx)] for note_idx in sorted_figure_note_idx]
                 # hunpai_figure_logits = torch.tensor(hunpai_figure_logits).unsqueeze(dim=0)
                 hunpai_figure_logits = torch.stack(hunpai_figure_logits).unsqueeze(dim=0)
@@ -1153,12 +1153,12 @@ class MultiModalTrainer(BaseTrainer):
         if self.accelerator.is_local_main_process:
             print(f"loss_figure_kd:{loss_figure_kd}")
 
-        # 处理图像模态数据
+        # Process image modality data
         if len(figure_inputs) > 0:
             n = len(sorted_figure_note_idx)
-            # 根据实验类型计算不同区间
+            # Calculate different intervals according to the experiment type
             if self.experiment_type == "top":
-                # 取前20%
+                # Take the top 20%
                 start_idx = 0
                 end_idx = round(n * self.top_p)
             elif self.experiment_type == "middle_1":
@@ -1177,20 +1177,20 @@ class MultiModalTrainer(BaseTrainer):
                 start_idx = round(n * (1 - self.top_p))
                 end_idx = n
             
-            # 确保至少取1个元素
+            # Ensure at least 1 element is taken
             end_idx = max(start_idx + 1, end_idx)
-            # 确保end不大于总长度
+            # Ensure end is not greater than the total length
             end_idx = min(n, end_idx)
             sorted_figure_note_idx = sorted_figure_note_idx[start_idx:end_idx]
         else:
             print(f"len(figure_inputs):{len(figure_inputs)}")
 
-        # 处理文本模态数据
+        # Process text modality data
         if len(text_inputs) > 0:
             m = len(sorted_text_note_idx)
-            # 根据实验类型计算不同区间
+            # Calculate different intervals according to the experiment type
             if self.experiment_type == "top":
-                # 取前20%
+                # Take the top 20%
                 start_idx = 0
                 end_idx = round(m * self.top_p)
             elif self.experiment_type == "middle_1":
@@ -1206,15 +1206,15 @@ class MultiModalTrainer(BaseTrainer):
                 start_idx = round(m * (1 - self.top_p))
                 end_idx = m
             
-            # 确保至少取1个元素
+            # Ensure at least 1 element is taken
             end_idx = max(start_idx + 1, end_idx)
-            # 确保end不大于总长度
+            # Ensure end is not greater than the total length
             end_idx = min(m, end_idx)
             sorted_text_note_idx = sorted_text_note_idx[start_idx:end_idx]
         else:
             print(f"len(text_inputs):{len(text_inputs)}")
 
-        # 混排标注损失
+        # Shuffled labeling loss
         if len(text_inputs)>0 and len(figure_inputs)>0:
             hunpai_note_idxs= sorted_figure_note_idx + sorted_text_note_idx
             print(f"混排标注量:{len(hunpai_note_idxs)}")
@@ -1222,7 +1222,7 @@ class MultiModalTrainer(BaseTrainer):
             # print(f"文本前 0.1:{sorted_text_note_idx}")
 
             hunpai_logits = []
-            # logits_sortedby_label这里就是混排的 label顺序,需要把note_idxs也要恢复成 label 顺序的 notes 顺序
+            # logits_sortedby_label here is the label order of the shuffle, and the note_idxs also need to be restored to the notes order of the label order
             note_idxs = torch.tensor(note_idxs)
             note_idxs_sortedby_label= note_idxs[sorted_indices]
             # print(f"note_idxs_sortedby_label:{note_idxs_sortedby_label}")
@@ -1383,4 +1383,3 @@ if __name__ == "__main__":
     trainer = trainer_class[config['trainer']](config)
     print(f"Starting Training")
     trainer.train()
-

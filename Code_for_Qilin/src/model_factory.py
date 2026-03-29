@@ -25,7 +25,7 @@ dist.init_process_group(
 )
 
 def is_main_process():
-    # 通常主进程的 LOCAL_RANK 为 0
+    # Usually, LOCAL_RANK of main process is 0
     return os.environ.get("LOCAL_RANK", "0") == "0"
 
 class BaseModel:
@@ -53,9 +53,7 @@ class BaseModel:
             except:
                 print("freeze_non_crossattention_parameters failed")
 
-
-
-### 定义Transformer分类器模型
+# Define Transformer classifier model
 class RMSNorm(nn.Module):
     def __init__(self, hidden_size, eps=1e-6):
         """
@@ -80,19 +78,19 @@ class RMSNorm(nn.Module):
 #         assert dim % n_heads == 0
 #         self.qkv_proj = nn.Linear(dim, dim * 3, bias=True)
 #         self.out_proj = nn.Linear(dim, dim, bias=True)
-#         # # 定义每个 head 独立的可学习 alpha 参数，初始值设为0.0
+#         # Define independent learnable alpha parameter for each head, initial value set to 0.0
 #         # self.alpha = nn.Parameter(torch.zeros(n_heads),requires_grad=True)
 #         self.step=0
 #         self.vis_dir="/root/paddlejob/workspace/env_run/output/multimodal/fig"
 
 #     def forward(self, x):
-#         B, N, C = x.size() # B为1，N 为正负样本数 ，C 为特征维度
+#         B, N, C = x.size() # B=1, N=number of positive/negative samples, C=feature dimension
 #         # print(f"B,N,C={B,N,C}") B,N,C=(1, 4, 3584)
-#         # 3 表示qkv
+#         # 3 represents qkv
 #         qkv = self.qkv_proj(x).reshape(B, N, 3, self.n_heads, self.head_dim)
 #         # print(f"qkv.shape={qkv.shape}") qkv.shape=torch.Size([1, 4, 3, 2, 1792])
 
-#         # qkv[:, :, 0] qkv[:, :, 0，：，：],两者都对,PyTorch支持自动省略尾部冒号
+#         # qkv[:, :, 0] is equivalent to qkv[:, :, 0，：，：], PyTorch supports omitting trailing colons automatically
 #         q, k, v = qkv[:, :, 0], qkv[:, :, 1], qkv[:, :, 2]  # (B, N, n_heads, head_dim)
 #         # q.shape == (B, N, n_heads, head_dim)
 #         q = q.transpose(1, 2)  # (B, n_heads, N, head_dim)
@@ -101,21 +99,21 @@ class RMSNorm(nn.Module):
 
 #         attn_scores = (q @ k.transpose(-2, -1)) / (self.head_dim ** 0.5) # (B, n_heads, N, N)
 
-#         # 在对角线上加不同 head 的 alpha
+#         # Add alpha for different heads on the diagonal
 #         identity = torch.eye(N, device=attn_scores.device).unsqueeze(0).unsqueeze(0)  # (1,1,N,N)
-#         # 每个head一个偏置值，这里设置为1/N，可调整
+#         # One bias value per head, set to 1/N here, adjustable
 #         weights = torch.full((self.n_heads,), fill_value=3.0 / N, device=attn_scores.device, dtype=attn_scores.dtype)
 #         attn_scores = attn_scores + weights.view(1, self.n_heads, 1, 1) * identity
 
 #         attn_probs = F.softmax(attn_scores, dim=-1)
 
-#         # === 可视化第1和第2个head的注意力分布和统计信息 ===
+#         # Visualize attention distribution and statistics for the 1st and 2nd heads
 #         if B == 1 and is_main_process() and self.step % 200 ==0:
 #             head_indices = [0, 1]
 #             for idx in head_indices:
 #                 attn_matrix = attn_probs[0, idx].detach().cpu().numpy()  # (N, N)
 
-#                 # 1. 画热力图
+#                 # 1. Plot heatmap
 #                 plt.figure(figsize=(6, 5))
 #                 sns.heatmap(attn_matrix, cmap='viridis', square=True,
 #                             xticklabels=True, yticklabels=True, cbar=True)
@@ -126,13 +124,13 @@ class RMSNorm(nn.Module):
 #                 plt.savefig(save_path)
 #                 plt.close()
 
-#                 # 2. 计算每行均值和方差
+#                 # 2. Calculate mean and variance per row
 #                 mean_per_row = attn_probs[0, idx].mean(dim=-1).detach().cpu()
 #                 var_per_row = attn_probs[0, idx].var(dim=-1).detach().cpu()
 
-#                 print(f"[Head {idx}] 每行注意力方差:\n{var_per_row}")
+#                 print(f"[Head {idx}] Variance of attention per row:\n{var_per_row}")
 
-#                 # 3. 可视化均值 & 方差（柱状图）
+#                 # 3. Visualize mean & variance (bar chart)
 #                 # plt.figure(figsize=(8, 4))
 #                 # plt.plot(mean_per_row.detach().numpy(), marker='o', label='Mean')
 #                 # plt.plot(var_per_row.detach().numpy(), marker='x', label='Variance')
@@ -144,14 +142,14 @@ class RMSNorm(nn.Module):
 #                 # plt.savefig(save_path)
 #                 # plt.close()
 
-#         # === attention输出 ===
+#         # Attention output
 
 #         attn_output = attn_probs @ v  # (B, n_heads, N, head_dim)
-#         # 合并所有头部
+#         # Concatenate all heads
 #         attn_output = attn_output.transpose(1, 2).contiguous()
 
 #         # # FlashAttention
-#         # # qkv应该的维度是 (batch_size, seqlen, 3, nheads, headdim)
+#         # # qkv dimension should be (batch_size, seqlen, 3, nheads, headdim)
 #         # # FlashAttention forward only supports head dimension at most 256
 #         # attn_output = flash_attn_qkvpacked_func(qkv, dropout_p=0.1, softmax_scale=None, causal=False,
 #         #                   window_size=(-1, -1), alibi_slopes=None, deterministic=False)
@@ -167,28 +165,28 @@ class RMSNorm(nn.Module):
 class CrossAttention(nn.Module):
     def __init__(self, user_dim, embed_dim, n_heads, vis_dir="/root/paddlejob/workspace/env_run/output/multimodal/fig"):
         """
-        user_dim : 用户特征维度
-        embed_dim : 内容嵌入维度
-        n_heads : 注意力头数
+        user_dim : User feature dimension
+        embed_dim : Content embedding dimension
+        n_heads : Number of attention heads
         """
         super().__init__()
         self.n_heads = n_heads
         self.head_dim = embed_dim // n_heads
         assert embed_dim % n_heads == 0
 
-        # 用户特征映射到 embed_dim 作为 query
+        # Map user features to embed_dim as query
         self.user_proj_v = nn.Linear(user_dim, embed_dim, bias=True)
         self.user_proj_k = nn.Linear(user_dim, embed_dim, bias=True)
 
-        # 内容 Key/Value 映射
+        # Content Key/Value projection
         self.q_proj = nn.Linear(embed_dim, embed_dim, bias=True)
 
-        # 输出 projection
+        # Output projection
         self.out_proj = nn.Linear(embed_dim, embed_dim, bias=True)
 
         self.vis_dir = vis_dir
         self.step = 0
-        # print("交叉注意力！")
+        # print("Cross attention!")
 
     def forward(self, user_feat, content_embeds):
         """
@@ -197,13 +195,13 @@ class CrossAttention(nn.Module):
         """
         B, N, C = content_embeds.size()
 
-        # === 嵌入特征生成 query ===
+        # Generate query from embedding features
         # [B, N, embed_dim] → [B,N, embed_dim]
         q = self.q_proj(content_embeds)  # (B,N, embed_dim)
         # reshape for multi-head
         q = q.view(B, N,self.n_heads, self.head_dim).transpose(1, 2)  # (B, n_heads, N, head_dim)
 
-        # === 用户生成 key, value ===
+        # Generate key, value from user features
         # [B, 1, embed_dim] → [B, 1, embed_dim]
         k = self.user_proj_k(user_feat)
         v = self.user_proj_v(user_feat)
@@ -211,11 +209,11 @@ class CrossAttention(nn.Module):
         k = k.view(B, 1, self.n_heads, self.head_dim).transpose(1,2)  # (B, n_heads, 1, head_dim)
         v = v.view(B, 1, self.n_heads, self.head_dim).transpose(1,2)  # (B, n_heads, 1, head_dim)
 
-        # === 计算 Attention scores ===
+        # Calculate Attention scores
         attn_scores = (q @ k.transpose(-2, -1)) / (self.head_dim ** 0.5)  # (B, n_heads, N, 1)
         attn_probs = F.softmax(attn_scores, dim=-1)  # (B, n_heads, N, 1)
 
-        # === 可选：可视化注意力 ===
+        # Optional: Visualize attention
         if B == 1 and self.step % 200 == 0:
             attn_matrix = attn_probs[0].detach().cpu().numpy()  # (n_heads, 1, N)
             for idx in range(min(2, self.n_heads)):
@@ -226,15 +224,15 @@ class CrossAttention(nn.Module):
                 plt.savefig(save_path)
                 plt.close()
 
-        # === Attention 输出 ===
+        # Attention output
         attn_output = attn_probs @ v  # (B, n_heads, N, head_dim)
         attn_output=attn_output.transpose(1, 2).contiguous()
         # (B, N, n_heads, head_dim)
 
-        # 合并 heads
+        # Concatenate heads
         attn_output = attn_output.reshape(B, N, C)  # (B, N,embed_dim)
 
-        # 输出 projection
+        # Output projection
         output = self.out_proj(attn_output)  # (B, embed_dim)
 
         self.step += 1
@@ -259,14 +257,14 @@ class MLP(nn.Module):
 class BinaryMLP(nn.Module):
     def __init__(self, input_dim, output_dim, hidden_multiplier=2, activation='silu', use_residual=True):
         """
-        二值特征编码 MLP 模块，支持残差连接和门控机制。
+        Binary feature encoding MLP module, supporting residual connections and gating mechanism.
 
         Args:
-            input_dim (int): 输入维度
-            output_dim (int): 输出维度
-            hidden_multiplier (int): 中间层维度 = input_dim * hidden_multiplier
-            activation (str): 'silu' 或 'relu'
-            use_residual (bool): 是否启用残差连接
+            input_dim (int): Input dimension
+            output_dim (int): Output dimension
+            hidden_multiplier (int): Hidden layer dimension = input_dim * hidden_multiplier
+            activation (str): 'silu' or 'relu'
+            use_residual (bool): Enable residual connection
         """
         super().__init__()
         self.input_dim = input_dim
@@ -281,10 +279,10 @@ class BinaryMLP(nn.Module):
         self.act_fn = nn.SiLU() if activation == 'silu' else nn.ReLU()
         
         if isinstance(self.act_fn, nn.ReLU):
-            print("激活函数为nn.ReLU()")
+            print("Activation function is nn.ReLU()")
 
 
-        # 如果启用残差且维度不一致，添加投影层
+        # Add projection layer if residual is enabled and dimensions mismatch
         if use_residual and input_dim != output_dim:
             self.res_proj = nn.Linear(input_dim, output_dim, bias=True)
         else:
@@ -306,10 +304,10 @@ class BinaryMLP(nn.Module):
 class ResidualBinaryMLPBlock(nn.Module):
     def __init__(self, mlp_layers: list):
         """
-        封装多个 BinaryMLP 层，自动添加跨层残差连接。
+        Encapsulate multiple BinaryMLP layers, automatically add cross-layer residual connections.
 
         Args:
-            mlp_layers (list): BinaryMLP 实例的列表
+            mlp_layers (list): List of BinaryMLP instances
         """
         super().__init__()
         self.layers = nn.ModuleList(mlp_layers)
@@ -317,7 +315,7 @@ class ResidualBinaryMLPBlock(nn.Module):
     def forward(self, x):
         for layer in self.layers:
             x = layer(x)
-            # 如果维度一致，默认 residual connection 已在 BinaryMLP 中处理
+            # If dimensions match, residual connection is handled in BinaryMLP by default
         return x
 
 
@@ -368,7 +366,7 @@ class TransformerClassifier(nn.Module):
         self.half()
         x = self.input_proj(x)
         # batch_size, seq_len, dim = x.size()
-        # # 调整形状为(batch*seq_len, dim)以适配BatchNorm1d
+        # # Reshape to (batch*seq_len, dim) to fit BatchNorm1d
         # x = x.reshape(-1, dim)
         # x = self.batch_norm1(x)
         # x = x.reshape(batch_size, seq_len, dim)      
@@ -399,16 +397,16 @@ class VLM_TransformerClassifier(nn.Module):
     def forward(self, x):  # x shape: (batch, seq_len, dim)
         x = self.input_proj(x)
         # batch_size, seq_len, dim = x.size()
-        # # 调整形状为(batch*seq_len, dim)以适配BatchNorm1d
+        # # Reshape to (batch*seq_len, dim) to fit BatchNorm1d
         # x = x.reshape(-1, dim)
         # x = self.batch_norm1(x)
         # x = x.reshape(batch_size, seq_len, dim)      
         for i, layer in enumerate(self.layers):
             x = layer(x)
-            # print("无 norm")
+            # print("No norm")
         x = self.common_proj(x)
         x = self.act_fn(x)
-        # x_cls = x[:, 0]  # 默认 cls token 在第0个位置
+        # x_cls = x[:, 0]  # Default cls token at position 0
         return self.out_proj(x)
 
 class MeanPooling(nn.Module):
@@ -429,10 +427,10 @@ class CrossEncoderModel(torch.nn.Module, BaseModel):
         hf_config = AutoConfig.from_pretrained(config['model']['model_name_or_path'])
 
         self.bert_hidde_size = 1130
-        # 定义分类器结构（至少3层线性层）
+        # Define classifier structure (at least 3 linear layers)
         Attention_config = {
             "hidden_size": self.bert_hidde_size,
-            "intermediate_size": 4 * self.bert_hidde_size # 通常是 hidden_size 的 4 倍
+            "intermediate_size": 4 * self.bert_hidde_size # Usually 4 times the hidden_size
         }
         self.classifier = TransformerClassifier(
             input_dim=self.bert_hidde_size, 
@@ -456,7 +454,7 @@ class CrossEncoderModel(torch.nn.Module, BaseModel):
             'search_share_num': 7323.0,
             'share_num': 66777.0
         }
-        # 对字典中的值进行 log2 操作，并取上整
+        # Apply log2 operation to values in the dictionary and round up
         self.feature_max_values = {
             key: np.ceil(np.log2(value)) if value > 0 else value
             for key, value in self.feature_max_values.items()
@@ -464,14 +462,14 @@ class CrossEncoderModel(torch.nn.Module, BaseModel):
         self.feature_bits={feat: len(bin(int(max_value))) - 2 for feat, max_value in self.feature_max_values.items()}
         self.binary_encoders = nn.ModuleDict({
             feat: nn.Sequential(
-                nn.Linear(total_bits, total_bits*2, bias=True), #添加两层全连接层，增强模型表达能力
+                nn.Linear(total_bits, total_bits*2, bias=True), #Add two fully connected layers to enhance model expression ability
                 # nn.ReLU(),
                 # nn.Linear(total_bits*2, total_bits*4, bias=True),
                 # nn.ReLU(),
                 # nn.Linear(total_bits*4, total_bits*2, bias=True)
             ) for feat, total_bits in self.feature_bits.items()
         })
-        print("已初始化 binary_encoders")
+        print("binary_encoders initialized")
 
         self.all_feat={'dense_feat9': 28.0, 'dense_feat26': 15.0, 'dense_feat37': 20.0, 'dense_feat34': 20.0, 'dense_feat25': 28.0, 'dense_feat11': 28.0, 'dense_feat20': 15.0, 'dense_feat13': 28.0, 'dense_feat10': 15.0, 'dense_feat14': 13.0, 'dense_feat24': 14.0, 'dense_feat1': 14.0, 'dense_feat33': 20.0, 'dense_feat28': 16.0, 'dense_feat36': 16.0, 'follows_num': 16.0, 'dense_feat2': 13.0, 'dense_feat38': 7.0, 'dense_feat18': 17.0, 'dense_feat32': 20.0, 'dense_feat12': 15.0, 'dense_feat35': 20.0, 'dense_feat31': 20.0, 'dense_feat8': 15.0}
         self.user_feat_bits={feat: len(bin(int(max_value))) - 2 for feat, max_value in self.all_feat.items()}
@@ -479,17 +477,17 @@ class CrossEncoderModel(torch.nn.Module, BaseModel):
         self.user_feat_bits["gender"]=2
         self.user_binary_encoders = nn.ModuleDict({
             feat: nn.Sequential(
-                nn.Linear(total_bits, total_bits*2, bias=True), #添加两层全连接层，增强模型表达能力
+                nn.Linear(total_bits, total_bits*2, bias=True), #Add two fully connected layers to enhance model expression ability
                 # nn.ReLU(),
                 # nn.Linear(total_bits*2, total_bits*4, bias=True),
                 # nn.ReLU(),
                 # nn.Linear(total_bits*4, total_bits*2, bias=True)
             ) for feat, total_bits in self.user_feat_bits.items()
         })
-        print("user_binary_encoders已初始化完成")
+        print("user_binary_encoders initialization completed")
 
-        self.cls_norm = RMSNorm(768)  # hidden_size 是 cls_output 的维度
-        self.feat_norm = RMSNorm(118)  # feat_dim 是 feat_tensor 的维度，例如 100
+        self.cls_norm = RMSNorm(768)  # hidden_size is the dimension of cls_output
+        self.feat_norm = RMSNorm(118)  # feat_dim is the dimension of feat_tensor, e.g. 100
         self.user_norm = RMSNorm(244)
 
 
@@ -512,9 +510,9 @@ class CrossEncoderModel(torch.nn.Module, BaseModel):
                 config=self.hf_model_config,
                 trust_remote_code=True
             )
-            # 新增
-            model.pooler = None  # 移除池化层
-            # 对 BERT 模型应用 LoRA（新增）,必须要赋值给 model
+            # New
+            model.pooler = None  # Remove pooling layer
+            # Apply LoRA to BERT model (new), must assign to model
             # model = self._setup_lora(model)
             
 
@@ -540,35 +538,35 @@ class CrossEncoderModel(torch.nn.Module, BaseModel):
         classifier_path = os.path.join(self.model_config['model_name_or_path'], 'classifier.pt')
         if os.path.exists(classifier_path):
             self.classifier.load_state_dict(torch.load(classifier_path))
-            print(f"已加载 classifier parameters from {classifier_path}")
+            print(f"Loaded classifier parameters from {classifier_path}")
 
         binary_encoders_path = os.path.join(self.model_config['model_name_or_path'], 'binary_encoders.pt')
         if os.path.exists(binary_encoders_path):
             self.binary_encoders.load_state_dict(torch.load(binary_encoders_path))
             print(f"Loaded binary_encoders parameters from {binary_encoders_path}")
-            print("已加载 binary_encoders")
+            print("Loaded binary_encoders")
 
         user_binary_encoders_path = os.path.join(self.model_config['model_name_or_path'], 'user_binary_encoders.pt')
         if os.path.exists(user_binary_encoders_path):
             self.user_binary_encoders.load_state_dict(torch.load(user_binary_encoders_path))
             print(f"Loaded binary_encoders parameters from {user_binary_encoders_path}")
-            print("已加载 user_binary_encoders_path")
+            print("Loaded user_binary_encoders_path")
 
-        # 设置 BERT 的 requires_grad 为 True
+        # Set BERT requires_grad to True
         # for param in model.parameters():
         #     param.requires_grad = False
-        # print("冻结 BERT")
+        # print("Freeze BERT")
 
         for param in model.parameters():
             param.requires_grad = True
-        print("不冻结 BERT")
+        print("Do not freeze BERT")
         model.pooler = None
 
-        # 设置 classifier 的 requires_grad 为 True
+        # Set classifier requires_grad to True
         for param in self.classifier.parameters():
             param.requires_grad = True
 
-        # # 设置所有参数的 requires_grad 为 True
+        # # Set all parameters requires_grad to True
         for param in self.binary_encoders.parameters():
             param.requires_grad = True
 
@@ -617,7 +615,7 @@ class CrossEncoderModel(torch.nn.Module, BaseModel):
         return model
 
     def _setup_lora(self, model):
-        # 不会运行这里的代码
+        # This code will not run
         print(f"Try to load lora model from {self.model_config['lora_checkpoint_dir']}")
         if os.path.exists(os.path.join(self.model_config['lora_checkpoint_dir'], 'adapter_config.json')):
             # model.load_adapter(self.model_config['lora_checkpoint_dir'], 'cross_encoder')
@@ -628,9 +626,9 @@ class CrossEncoderModel(torch.nn.Module, BaseModel):
                 if 'lora_' in name:  
                     param.requires_grad = True  
 
-            # #全量微调
+            # #Full fine-tuning
             # model = model.merge_and_unload()
-            # print("全量微调！")
+            # print("Full fine-tuning!")
             # for name, param in model.named_parameters():  
             #     param.requires_grad = True 
 
@@ -647,7 +645,7 @@ class CrossEncoderModel(torch.nn.Module, BaseModel):
                 target_modules = ["query", "key", "value"]
             )
             # model.add_adapter(peft_config, "cross_encoder")
-            # 新增
+            # New
             model = get_peft_model(model, peft_config)
             print('Add cross_encoder lora adapter from init')
 
@@ -658,17 +656,17 @@ class CrossEncoderModel(torch.nn.Module, BaseModel):
         return model
 
     def save_pretrained(self, save_path):
-        # print(f"正在 Save model to {save_path}")
+        # print(f"Saving model to {save_path}")
         # self.model.save_pretrained(save_path)
         # # self.tokenizer.save_pretrained(save_path)
         # classifier_path = os.path.join(save_path, 'classifier.pt')
         # torch.save(self.classifier.state_dict(), classifier_path)
-        # # # 保存 binary_encoders（新增部分）
+        # # # Save binary_encoders (new part)
         # binary_encoders_path = os.path.join(save_path, 'binary_encoders.pt')
         # torch.save(self.binary_encoders.state_dict(), binary_encoders_path)
         # user_binary_encoders_path = os.path.join(save_path, 'user_binary_encoders.pt')
         # torch.save(self.user_binary_encoders.state_dict(), user_binary_encoders_path)
-        # # RMSNorm 参数
+        # # RMSNorm parameters
         # torch.save(self.cls_norm.state_dict(), os.path.join(save_path, 'cls_norm.pt'))
         # torch.save(self.feat_norm.state_dict(), os.path.join(save_path, 'feat_norm.pt'))
         # torch.save(self.user_norm.state_dict(), os.path.join(save_path, 'user_norm.pt'))
@@ -685,7 +683,7 @@ class CrossEncoderModel(torch.nn.Module, BaseModel):
         pass
 
     def forward(self, batch_features,user_feat, **inputs):
-        # 遍历所有子模块，转换为 float16
+        # Traverse all submodules and convert to float16
         self.model = self.model.to(torch.float16)
         for feat, encoder in self.binary_encoders.items():
             encoder.to(torch.float16) 
@@ -703,51 +701,51 @@ class CrossEncoderModel(torch.nn.Module, BaseModel):
         last_hidden_states = outputs.last_hidden_state
         cls_output = last_hidden_states[:, 0, :]
         
-        # 使用平均池化
+        # Use mean pooling
         # last_hidden_states = outputs.last_hidden_state
-        # attention_mask = inputs.get("attention_mask")  # 获取attention mask
+        # attention_mask = inputs.get("attention_mask")  # Get attention mask
         # mean_embeddings = self.mean_pooling(last_hidden_states, attention_mask)
 
         # shape:[num1+num2, H]
         # logits = self.classifier(cls_output)
 
-        # 构造 feature tensor： [B, F]
+        # Construct feature tensor： [B, F]
         feat_tensors = []
         for feat, encoder in self.binary_encoders.items():
             feat_tensor = batch_features[feat]
-            # feat_tensor是一个张量列表，每一个张量代表当前数值的二进制转化后的张量
+            # feat_tensor is a tensor list, each tensor represents the binary converted tensor of the current value
             # print(f"feat_tensor:{feat_tensor}")
             # print(f"feat_tensor.shape:{feat_tensor.shape}")
-            encoded = torch.stack([encoder(i) for i in feat_tensor], dim=0)  # encoded 形状为 [B, 20]，B为正负样本总数，N为特征编码后的维度
-            # feat_tensor的每一个元素维度统一为 20
+            encoded = torch.stack([encoder(i) for i in feat_tensor], dim=0)  # encoded shape: [B, 20], B=total positive/negative samples, N=dimension after feature encoding
+            # Each element of feat_tensor is unified to dimension 20
             feat_tensors.append(encoded)
 
         # print(f"len(feat_tensors):{len(feat_tensors)}") # 5
         # print(f"feat_tensors[0][0].shape:{feat_tensors[0][0].shape}") # 15
         # feat_tensor = torch.stack(feat_tensors, dim=1).float()  # [B, F]
 
-        # 拼接所有特征：[B, 5*20] = [B, 100]
-        feat_tensor = torch.cat(feat_tensors, dim=1)  # [B, 100]，B为正负样本总数，100为所有特征编码后的维度
+        # Concatenate all features：[B, 5*20] = [B, 100]
+        feat_tensor = torch.cat(feat_tensors, dim=1)  # [B, 100], B=total positive/negative samples, 100=dimension after all feature encoding
 
         # print(f"feat_tensor.shape:{feat_tensor.shape}")
-        # 当 dim=1 时，堆叠操作会在第 1 维（列方向）合并这些张量，结果形状为 [2N, 5]
+        # When dim=1, stack operation merges these tensors in column direction, result shape: [2N, 5]
 
         User_feats = []
         for feat, encoder in self.user_binary_encoders.items():
             user_feat_tensor = user_feat[feat]
-            # feat_tensor是一个张量列表，每一个张量代表当前数值的二进制转化后的张量
+            # feat_tensor is a tensor list, each tensor represents the binary converted tensor of the current value
             # print(f"feat_tensor:{feat_tensor}")
             # print(f"feat_tensor.shape:{feat_tensor.shape}")
             # encoded = [encoder(i) for i in feat_tensor]
-            encoded = torch.stack([encoder(i) for i in user_feat_tensor], dim=0)  # encoded 形状为 [B, 20]
-            # feat_tensor的每一个元素维度统一为 20
+            encoded = torch.stack([encoder(i) for i in user_feat_tensor], dim=0)  # encoded shape: [B, 20]
+            # Each element of feat_tensor is unified to dimension 20
             User_feats.append(encoded)
 
-        User_feats = torch.cat(User_feats, dim=1) # [B, X]，B为正负样本总数，X为所有特征编码后的维度
+        User_feats = torch.cat(User_feats, dim=1) # [B, X], B=total positive/negative samples, X=dimension after all feature encoding
         # print(f"User_feats.shape:{User_feats.shape}")
 
         cls_output = self.cls_norm(cls_output)         # [B, H]
-        # cls_output = F.normalize(cls_output, p=2, dim=1)  # L2 归一化
+        # cls_output = F.normalize(cls_output, p=2, dim=1)  # L2 normalization
         # cls_output = self.batch_norm1(cls_output)
         # mean = cls_output.mean(dim=1, keepdim=True)
         # std = cls_output.std(dim=1, keepdim=True)
@@ -763,36 +761,36 @@ class CrossEncoderModel(torch.nn.Module, BaseModel):
         cls_output = self.alpha * cls_output
         feat_tensor = self.beta * feat_tensor
         User_feats = self.gamma * User_feats
-        # print("cls_output dtype:", cls_output.dtype)  # 输出数据类型
-        # print("feat_tensor dtype:", feat_tensor.dtype)  # 输出数据类型
-        # print("User_feats dtype:", User_feats.dtype)  # 输出数据类型
-        # 新拼接并分类
+        # print("cls_output dtype:", cls_output.dtype)  # Print data type
+        # print("feat_tensor dtype:", feat_tensor.dtype)  # Print data type
+        # print("User_feats dtype:", User_feats.dtype)  # Print data type
+        # New concatenation and classification
         concat = torch.cat([cls_output, feat_tensor], dim=1)  # [B, H+F]
         concat = torch.cat([concat, User_feats], dim=1)  # [B, H+F]
         # ƒconcat = self.x_norm(concat)
 
-        # x = concat.unsqueeze(1) # 从 [B, H+F] -> [B, 1, H+F]
+        # x = concat.unsqueeze(1) # From [B, H+F] -> [B, 1, H+F]
 
         # x = cls_output.unsqueeze(1)
         # x = mean_embeddings.unsqueeze(1)
 
-        ############ 特征分析模块，可插拔
+        ############ Feature analysis module, pluggable
         # if is_main_process():
-        #     # 去掉第二维（1） -> [B, H+F]
+        #     # Remove the second dimension (1) -> [B, H+F]
         #     x_2d = x.squeeze(1)
         #     HF=  x_2d.shape[1] #[B, H+F]
-        #     # 计算每个特征维度上的统计信息
+        #     # Calculate statistics on each feature dimension
         #     mean_per_dim = x_2d.mean(dim=0).detach().cpu().numpy()
         #     std_per_dim = x_2d.std(dim=0).detach().cpu().numpy()
         #     max_per_dim = x_2d.max(dim=0)[0].detach().cpu().numpy()
         #     min_per_dim = x_2d.min(dim=0)[0].detach().cpu().numpy()
         #     var_per_dim = x_2d.var(dim=0).detach().cpu().numpy()
 
-        #     # 打印数值范围（可选）
-        #     # print("特征维度上的均值范围：", mean_per_dim.min(), "~", mean_per_dim.max())
-        #     # print("特征维度上的方差范围：", var_per_dim.min(), "~", var_per_dim.max())
+        #     # Print value range (optional)
+        #     # print("Mean range on feature dimensions：", mean_per_dim.min(), "~", mean_per_dim.max())
+        #     # print("Variance range on feature dimensions：", var_per_dim.min(), "~", var_per_dim.max())
 
-        #     # 可视化：特征维度上的均值和标准差
+        #     # Visualization: mean and standard deviation on feature dimensions
         #     plt.figure(figsize=(12, 6))
         #     plt.plot(mean_per_dim, label='Mean')
         #     plt.plot(std_per_dim, label='Std')
@@ -802,13 +800,13 @@ class CrossEncoderModel(torch.nn.Module, BaseModel):
         #     plt.ylabel("value")
         #     plt.legend()
         #     plt.grid(True)
-        #     # 添加三条红色虚线（垂直线）
+        #     # Add three red dashed lines (vertical lines)
         #     # for x_pos in [768, 768 + 118, 768 + 118 + 244]:
         #     #     plt.axvline(x=x_pos, color='red', linestyle='--', linewidth=0.5)
         #     plt.tight_layout()
         #     plt.savefig("output/x_visavle.png")
-        ############ 特征分析模块，可插拔
-        # print("concat dtype:", concat.dtype)  # 输出数据类型
+        ############ Feature analysis module, pluggable
+        # print("concat dtype:", concat.dtype)  # Print data type
         logits = self.classifier(concat).squeeze(-1)          # [B]
         # logits = self.classifier(x).squeeze(-1)          # [B]
         # print(f"concat.shape:{concat.shape}")
@@ -819,7 +817,7 @@ class CrossEncoderModel(torch.nn.Module, BaseModel):
 class GatedVisualTextFusion(nn.Module):
     def __init__(self, embed_dim):
         super().__init__()
-        # concat 后维度翻倍，Linear 默认包含 bias
+        # Dimension doubles after concat, Linear includes bias by default
         self.gate_linear = nn.Linear(embed_dim * 2, embed_dim, bias=True)
         self.sigmoid = nn.Sigmoid()
 
@@ -830,7 +828,7 @@ class GatedVisualTextFusion(nn.Module):
         :return: fused_feat [batch_size, embed_dim]
         """
         concat_feat = torch.cat([visual_feat, text_feat], dim=-1)  # [B, 2*D]
-        gate_logits = self.gate_linear(concat_feat)  # [B, D], 包含 bias
+        gate_logits = self.gate_linear(concat_feat)  # [B, D], includes bias
         gate = self.sigmoid(gate_logits)  # [B, D], gate value ∈ (0,1)
 
         # gated weighted fusion
@@ -852,10 +850,10 @@ class VLMCrossEncoderModel(torch.nn.Module):
         )
         
         self.vlm_hidde_size = 1898
-        # 定义分类器结构（至少3层线性层）
+        # Define classifier structure (at least 3 linear layers)
         Attention_config = {
             "hidden_size": self.vlm_hidde_size,
-            "intermediate_size": 4 * self.vlm_hidde_size # 通常是 hidden_size 的 4 倍
+            "intermediate_size": 4 * self.vlm_hidde_size # Usually 4 times the hidden_size
         }
         self.classifier = VLM_TransformerClassifier(
             input_dim=self.vlm_hidde_size, 
@@ -866,15 +864,15 @@ class VLMCrossEncoderModel(torch.nn.Module):
 
 
         self.model_config['lora_checkpoint_dir']="model/Submodel_ckpt/2025-07-11-16-57-46/vlm_checkpoints"
-        # 创建文件夹，如果已存在则不报错
+        # Create folder, no error if exists
         os.makedirs(self.model_config['lora_checkpoint_dir'], exist_ok=True)
         classifier_base_ckpt = os.path.join(self.model_config['lora_checkpoint_dir'], 'classifier_base.pt')
         if dist.is_initialized():
             dist.barrier()
-            print("等待同时尝试加载")
+            print("Waiting for simultaneous loading attempt")
         if os.path.exists(classifier_base_ckpt):
             self.classifier.load_state_dict(torch.load(classifier_base_ckpt))
-            print("从先前的base model 加载classifier")
+            print("Load classifier from previous base model")
         else:
             if dist.is_initialized():
                 dist.barrier()
@@ -883,9 +881,9 @@ class VLMCrossEncoderModel(torch.nn.Module):
                 print("Saved classifier and base_model.")
         if dist.is_initialized():
             dist.barrier()
-            print("主进程保存成功,继续运行")
+            print("Main process saved successfully, continue running")
 
-        #笔记统计特征
+        # Note statistical features
         self.feature_max_values = {
             'rec_view_time': 269531514.0,
             'video_width': 7680.0,
@@ -901,7 +899,7 @@ class VLMCrossEncoderModel(torch.nn.Module):
             'search_share_num': 7323.0,
             'share_num': 66777.0
         }
-        # 对字典中的值进行 log2 操作，并取上整
+        # Apply log2 operation to values in the dictionary and round up
         self.feature_max_values = {
             key: np.ceil(np.log2(value)) if value > 0 else value
             for key, value in self.feature_max_values.items()
@@ -909,32 +907,32 @@ class VLMCrossEncoderModel(torch.nn.Module):
         self.feature_bits={feat: len(bin(int(max_value))) - 2 for feat, max_value in self.feature_max_values.items()}
         self.binary_encoders = nn.ModuleDict({
             feat: nn.Sequential(
-                nn.Linear(total_bits, total_bits*2, bias=True), #添加两层全连接层，增强模型表达能力
+                nn.Linear(total_bits, total_bits*2, bias=True), #Add two fully connected layers to enhance model expression ability
                 # nn.ReLU(),
                 # nn.Linear(total_bits*2, total_bits*4, bias=True),
                 # nn.ReLU(),
                 # nn.Linear(total_bits*4, total_bits*2, bias=True)
             ) for feat, total_bits in self.feature_bits.items()
         })
-        print("已初始化 binary_encoders")
-        # 用户特征
+        print("binary_encoders initialized")
+        # User features
         self.all_feat={'dense_feat9': 28.0, 'dense_feat26': 15.0, 'dense_feat37': 20.0, 'dense_feat34': 20.0, 'dense_feat25': 28.0, 'dense_feat11': 28.0, 'dense_feat20': 15.0, 'dense_feat13': 28.0, 'dense_feat10': 15.0, 'dense_feat14': 13.0, 'dense_feat24': 14.0, 'dense_feat1': 14.0, 'dense_feat33': 20.0, 'dense_feat28': 16.0, 'dense_feat36': 16.0, 'follows_num': 16.0, 'dense_feat2': 13.0, 'dense_feat38': 7.0, 'dense_feat18': 17.0, 'dense_feat32': 20.0, 'dense_feat12': 15.0, 'dense_feat35': 20.0, 'dense_feat31': 20.0, 'dense_feat8': 15.0}
         self.user_feat_bits={feat: len(bin(int(max_value)))- 2 for feat, max_value in self.all_feat.items()}
         self.user_feat_bits["age"]=11
         self.user_feat_bits["gender"]=2
         self.user_binary_encoders = nn.ModuleDict({
             feat: nn.Sequential(
-                nn.Linear(total_bits, total_bits*2, bias=True), #添加两层全连接层，增强模型表达能力
+                nn.Linear(total_bits, total_bits*2, bias=True), #Add two fully connected layers to enhance model expression ability
                 # nn.ReLU(),
                 # nn.Linear(total_bits*2, total_bits*4, bias=True),
                 # nn.ReLU(),
                 # nn.Linear(total_bits*4, total_bits*2, bias=True)
             ) for feat, total_bits in self.user_feat_bits.items()
         })
-        print("user_binary_encoders已初始化完成") 
+        print("user_binary_encoders initialization completed") 
 
-        self.cls_norm = RMSNorm(1536)  # hidden_size 是 mean_pool 的维度
-        self.feat_norm = RMSNorm(118)  # feat_dim 是 feat_tensor 的维度，例如 100
+        self.cls_norm = RMSNorm(1536)  # hidden_size is the dimension of mean_pool
+        self.feat_norm = RMSNorm(118)  # feat_dim is the dimension of feat_tensor, e.g. 100
         self.user_norm = RMSNorm(244)
         # init_weights=(1.0, 1.0, 1.0)
         # self.alpha = nn.Parameter(torch.tensor(init_weights[0], dtype=torch.float16))
@@ -942,15 +940,15 @@ class VLMCrossEncoderModel(torch.nn.Module):
         # self.gamma = nn.Parameter(torch.tensor(init_weights[2], dtype=torch.float16))
         embed_dim = 1536
         self.fusion_module = GatedVisualTextFusion(embed_dim=embed_dim)
-        print("早期融合和晚期融合结合!")
+        print("Combination of early fusion and late fusion!")
 
         fusion_module_base_ckpt = os.path.join(self.model_config['lora_checkpoint_dir'], 'fusion_module_base.pt')
         if dist.is_initialized():
             dist.barrier()
-            print("等待同时尝试加载")
+            print("Waiting for simultaneous loading attempt")
         if os.path.exists(fusion_module_base_ckpt):
             self.fusion_module.load_state_dict(torch.load(fusion_module_base_ckpt))
-            print("从先前的base model 加载 fusion_module")
+            print("Load fusion_module from previous base model")
         else:
             if dist.is_initialized():
                 dist.barrier()
@@ -959,23 +957,23 @@ class VLMCrossEncoderModel(torch.nn.Module):
                 print("Saved fusion_module and base_model.")
         if dist.is_initialized():
             dist.barrier()
-            print("主进程保存成功,继续运行")
+            print("Main process saved successfully, continue running")
 
-        # #加载检查点 
+        # #Load checkpoint 
         binary_encoders_path = os.path.join(self.model_config['lora_checkpoint_dir'], 'binary_encoders.pt')
         if os.path.exists(binary_encoders_path):
             self.binary_encoders.load_state_dict(torch.load(binary_encoders_path))
-            print(f"已加载 binary_encoders from {binary_encoders_path}")
+            print(f"Loaded binary_encoders from {binary_encoders_path}")
         else:
-            print("初始化 binary_encoders from init")
+            print("Initialize binary_encoders from init")
 
         user_binary_encoders_path = os.path.join(self.model_config['lora_checkpoint_dir'], 'user_binary_encoders.pt')
         if os.path.exists(user_binary_encoders_path):
             self.user_binary_encoders.load_state_dict(torch.load(user_binary_encoders_path))
             print(f"Loaded user_binary_encoders_path parameters from {user_binary_encoders_path}")
-            print("已加载 user_binary_encoders_path")
+            print("Loaded user_binary_encoders_path")
         else:
-            print("初始化 user_binary_encoders_path from init")
+            print("Initialize user_binary_encoders_path from init")
 
         # alpha_path = os.path.join(self.model_config['lora_checkpoint_dir'], 'alpha.pt')
         # if os.path.exists(alpha_path):
@@ -1044,11 +1042,11 @@ class VLMCrossEncoderModel(torch.nn.Module):
             param.requires_grad = False
 
         if self.model_config['gradient_checkpointing']:
-            print("开启梯度检查点")
+            print("Enable gradient checkpointing")
             self.model.gradient_checkpointing_enable()
             self.model.enable_input_require_grads()
         else:
-            print("梯度检查点关闭")
+            print("Gradient checkpointing disabled")
 
 
     def _setup_lora(self, model, classifier,fusion_module):
@@ -1072,7 +1070,7 @@ class VLMCrossEncoderModel(torch.nn.Module):
                 target_modules=["q_proj", "k_proj", "v_proj", "o_proj","gate_proj", "up_proj", "down_proj"],
             )
             #model.add_adapter(peft_config, "cross_encoder")
-            # 新增
+            # New
             model = PeftModel(model, peft_config)
             for name, param in model.named_parameters():  
                 if 'lora_' in name:  
@@ -1081,7 +1079,7 @@ class VLMCrossEncoderModel(torch.nn.Module):
 
         # for param in model.parameters():
         #     param.requires_grad = False
-        # print("冻结VLM!")
+        # print("Freeze VLM!")
         for name, param in model.named_parameters():
             if "vision_encoder" in name:
                 print(f"{name} requires_grad: {param.requires_grad}")
@@ -1097,7 +1095,7 @@ class VLMCrossEncoderModel(torch.nn.Module):
             # else:
             #     print("classifier is NOT a lora model ")
             classifier.load_state_dict(torch.load(classifier_base_ckpt))
-            # 初始化 LoRA 权重（注意不使用 from_pretrained）
+            # Initialize LoRA weights (note: do not use from_pretrained)
             peft_classifier_config = LoraConfig(
                 lora_alpha=16,
                 lora_dropout=0.1,
@@ -1108,7 +1106,7 @@ class VLMCrossEncoderModel(torch.nn.Module):
             )
             classifier = PeftModel(classifier, peft_config=peft_classifier_config)
 
-            # 加载 LoRA adapter 权重
+            # Load LoRA adapter weights
             classifier_lora_ckpt = os.path.join(self.model_config['lora_checkpoint_dir'], "classifier_lora")
             if os.path.exists(classifier_lora_ckpt):
                 classifier.load_adapter(classifier_lora_ckpt, adapter_name="default", is_trainable=True)
@@ -1141,7 +1139,7 @@ class VLMCrossEncoderModel(torch.nn.Module):
         fusion_module_base_ckpt = os.path.join(self.model_config['lora_checkpoint_dir'], 'fusion_module_base.pt')
         if os.path.exists(fusion_module_base_ckpt):
             fusion_module.load_state_dict(torch.load(fusion_module_base_ckpt))
-            # 初始化 LoRA 权重（注意不使用 from_pretrained）
+            # Initialize LoRA weights (note: do not use from_pretrained)
             peft_fusion_module_config = LoraConfig(
                 lora_alpha=16,
                 lora_dropout=0.1,
@@ -1152,7 +1150,7 @@ class VLMCrossEncoderModel(torch.nn.Module):
             )
             fusion_module = PeftModel(fusion_module, peft_config=peft_fusion_module_config)
 
-            # 加载 LoRA adapter 权重
+            # Load LoRA adapter weights
             fusion_module_lora_ckpt = os.path.join(self.model_config['lora_checkpoint_dir'], "fusion_module_lora")
             if os.path.exists(fusion_module_lora_ckpt):
                 fusion_module.load_adapter(fusion_module_lora_ckpt, adapter_name="default", is_trainable=True)
@@ -1198,7 +1196,7 @@ class VLMCrossEncoderModel(torch.nn.Module):
         return model,classifier,fusion_module
 
     def forward(self, batch_features,user_feat, **inputs): 
-        # 默认FP32
+        # Default FP32
         self.model = self.model.to(torch.float16)
         self.classifier = self.classifier.to(torch.float16)
         self.user_binary_encoders = self.user_binary_encoders.to(torch.float16)
@@ -1210,7 +1208,7 @@ class VLMCrossEncoderModel(torch.nn.Module):
 
         inputs["pixel_values"].requires_grad_()
         # for key, value in inputs.items():
-        #     # 打印键和对应值的形状
+        #     # Print key and corresponding value shape
         #     print(f"Key: {key}, Shape: {value.shape}")
             # Key: input_ids, Shape: torch.Size([5, 512])
             # Key: attention_mask, Shape: torch.Size([5, 512])
@@ -1225,30 +1223,30 @@ class VLMCrossEncoderModel(torch.nn.Module):
         # )
 
         #======================================================
-        visual_features = self.model.visual(hidden_states=inputs["pixel_values"], grid_thw=inputs["image_grid_thw"])  # ViT输出
-        # print(f"split 之前 visual_features.shape : {visual_features.shape}")
-        # 经过 split 之前，visual_features.shape : torch.Size([400, 1536])
-        # image_grid_thw.prod(-1) 用于计算张量在最后一个维度，计算每个图像的总块数（T*H*W）
+        visual_features = self.model.visual(hidden_states=inputs["pixel_values"], grid_thw=inputs["image_grid_thw"])  # ViT output
+        # print(f"visual_features.shape before split : {visual_features.shape}")
+        # Before split, visual_features.shape : torch.Size([400, 1536])
+        # image_grid_thw.prod(-1) is used to calculate the total number of patches per image (T*H*W)
         split_sizes = (inputs["image_grid_thw"].prod(-1) // self.model.visual.spatial_merge_size**2).tolist()
         # print(f"split_sizes:{split_sizes}") [100,100,..,100]
         visual_features = torch.split(visual_features, split_sizes)
-        # 经过 split 之后是一个元组，代表一个 batch 内每一个图像的 token 的 embedding
-        # split 之后: {[f.shape for f in visual_features]}")  [torch.Size([100, 1536])
-        # Qwen2-vl 中 已知模型的图片最大分辨率为280*280，patchsize为14 merge size为2，那么一个图片要占token 数=(H/PM)*(W/PM)=100 个
+        # After split, it is a tuple representing the embedding of each image's tokens in a batch
+        # After split: {[f.shape for f in visual_features]}")  [torch.Size([100, 1536])
+        # In Qwen2-vl, the maximum image resolution is 280*280, patchsize=14, merge size=2, so one image occupies 100 tokens: (H/PM)*(W/PM)=100
 
-        #图像 token，将每100个图像token压缩成一个token
-        visual_features_stacked = torch.stack(visual_features)  # 堆叠 → [batch_size, 100, 1536]
+        # Image tokens, compress every 100 image tokens into one token
+        visual_features_stacked = torch.stack(visual_features)  # Stack → [batch_size, 100, 1536]
         # visual_features_stacked.shape:torch.Size([4, 100, 1536])
-        pooled_features = visual_features_stacked.mean(dim=1)  # 在token维度(dim=1)求平均 → [batch_size, 1536]
+        pooled_features = visual_features_stacked.mean(dim=1)  # Average on token dimension (dim=1) → [batch_size, 1536]
 
-        # 文本token
+        # Text tokens
         outputs = self.model(**inputs, output_hidden_states=True)
         hidden_states = outputs.hidden_states[-1]
         # print(f"hidden_states.shape:{hidden_states.shape}")
-        # hidden_states.shape:torch.Size([13, 512, 1536]) 13个 note
+        # hidden_states.shape:torch.Size([13, 512, 1536]) 13 notes
         text_feature = hidden_states[:,-1]
 
-        #早期融合和晚期融合
+        # Early fusion and late fusion
         pooled_features.requires_grad_()
         text_feature.requires_grad_()
 
@@ -1261,16 +1259,16 @@ class VLMCrossEncoderModel(torch.nn.Module):
         #======================================================
         # print(f"features.shape:{features.shape}") # [B,1536]
 
-        # # 构造 feature tensor： [B, F]
+        # # Construct feature tensor： [B, F]
         feat_tensors = []
-        # 获取当前 rank（若未初始化 dist，则默认为 0）
+        # Get current rank (default 0 if dist not initialized)
 
         for feat, encoder in self.binary_encoders.items():
             feat_tensor = batch_features[feat]
-            # feat_tensor是一个张量列表，每一个张量代表当前数值的二进制转化后的张量
+            # feat_tensor is a tensor list, each tensor represents the binary converted tensor of the current value
             # print(f"feat_tensor:{feat_tensor}")
             # print(f"feat_tensor.shape:{feat_tensor.shape}")
-            encoded = torch.stack([encoder(i) for i in feat_tensor], dim=0)  # encoded 形状为 [B, 20]，B为正负样本总数，N为特征编码后的维度
+            encoded = torch.stack([encoder(i) for i in feat_tensor], dim=0)  # encoded shape: [B, 20], B=total positive/negative samples, N=dimension after feature encoding
 
             # encoded_list = []
             # for i in feat_tensor:
@@ -1283,30 +1281,30 @@ class VLMCrossEncoderModel(torch.nn.Module):
             #     # print(f"encoded_i.dtype:{encoded_i.dtype}") 
             #     #encoded_i.dtype:torch.bfloat16
             #     encoded_list.append(encoded_i)
-            # encoded = torch.stack(encoded_list, dim=0)  # encoded 形状为 [B, 20]
-            # # feat_tensor的每一个元素维度统一为 20
+            # encoded = torch.stack(encoded_list, dim=0)  # encoded shape: [B, 20]
+            # # Each element of feat_tensor is unified to dimension 20
 
             feat_tensors.append(encoded)
-        # 拼接所有特征：[B, 5*20] = [B, 100]
-        feat_tensor = torch.cat(feat_tensors, dim=1)  # [B, 100]，B为正负样本总数，100为所有特征编码后的维度
+        # Concatenate all features：[B, 5*20] = [B, 100]
+        feat_tensor = torch.cat(feat_tensors, dim=1)  # [B, 100], B=total positive/negative samples, 100=dimension after all feature encoding
         # print(type(feat_tensor), isinstance(feat_tensor, torch.Tensor))
         # print("feat_tensor.requires_grad:", feat_tensor.requires_grad)
 
         User_feats = []
         for feat, encoder in self.user_binary_encoders.items():
             user_feat_tensor = user_feat[feat]
-            # feat_tensor是一个张量列表，每一个张量代表当前数值的二进制转化后的张量
-            encoded = torch.stack([encoder(i) for i in user_feat_tensor], dim=0)  # encoded 形状为 [B, 20]
+            # feat_tensor is a tensor list, each tensor represents the binary converted tensor of the current value
+            encoded = torch.stack([encoder(i) for i in user_feat_tensor], dim=0)  # encoded shape: [B, 20]
             # encoded_list = []
             # for i in user_feat_tensor:
             #     encoded_i = encoder(i)
 
             #     # print(f"user_binary_encoders: {feat}, input requires_grad: {i.requires_grad}, output requires_grad: {encoded_i.requires_grad}")
             #     encoded_list.append(encoded_i)
-            # encoded = torch.stack(encoded_list, dim=0)  # encoded 形状为 [B, 20]
-            # feat_tensor的每一个元素维度统一为 20
+            # encoded = torch.stack(encoded_list, dim=0)  # encoded shape: [B, 20]
+            # Each element of feat_tensor is unified to dimension 20
             User_feats.append(encoded)
-        User_feats = torch.cat(User_feats, dim=1) # [B, X]，B为正负样本总数，X为所有特征编码后的维度
+        User_feats = torch.cat(User_feats, dim=1) # [B, X], B=total positive/negative samples, X=dimension after all feature encoding
 
         features = self.cls_norm(features)         # [B, H]
         feat_tensor = self.feat_norm(feat_tensor)      # [B, F1]
@@ -1325,7 +1323,7 @@ class VLMCrossEncoderModel(torch.nn.Module):
         # # print(f"concat1.shape:{concat.shape}")
         concat = torch.cat([concat1, User_feats], dim=1)  # [B, H+F]
         # # print(f"concat2.shape:{concat.shape}")
-        x = concat.unsqueeze(1) # 从 [B, H+F] -> [B, 1, H+F]
+        x = concat.unsqueeze(1) # From [B, H+F] -> [B, 1, H+F]
         logits = self.classifier(x).squeeze(-1)          # [B]
 
         return logits
@@ -1338,21 +1336,21 @@ class VLMCrossEncoderModel(torch.nn.Module):
         #     self.classifier.save_pretrained(os.path.join(save_path, "classifier_lora"))
         #     print("Saved classifier LoRA adapter.")
 
-        # # 保存 binary_encoders（新增部分）
+        # # Save binary_encoders (new part)
         # binary_encoders_path = os.path.join(save_path, 'binary_encoders.pt')
         # torch.save(self.binary_encoders.state_dict(), binary_encoders_path)
         # user_binary_encoders_path = os.path.join(save_path, 'user_binary_encoders.pt')
         # torch.save(self.user_binary_encoders.state_dict(), user_binary_encoders_path)
-        # # RMSNorm 参数
+        # # RMSNorm parameters
         # torch.save(self.cls_norm.state_dict(), os.path.join(save_path, 'cls_norm.pt'))
         # torch.save(self.feat_norm.state_dict(), os.path.join(save_path, 'feat_norm.pt'))
         # torch.save(self.user_norm.state_dict(), os.path.join(save_path, 'user_norm.pt'))
-        # # 权重
+        # # Weights
         # # torch.save(self.alpha.data.cpu(), os.path.join(save_path, 'alpha.pt'))
         # # torch.save(self.beta.data.cpu(), os.path.join(save_path, 'beta.pt'))
         # # torch.save(self.gamma.data.cpu(), os.path.join(save_path, 'gamma.pt'))
 
-        # # 融合模块
+        # # Fusion module
         # if isinstance(self.fusion_module, PeftModel):
         #     self.fusion_module.save_pretrained(os.path.join(save_path, "fusion_module_lora"))
         #     print("Saved fusion_module LoRA adapter.")
@@ -1394,7 +1392,7 @@ class SelfAttentionClassifier(nn.Module):
 class GatedVisualTextFusion(nn.Module):
     def __init__(self, embed_dim):
         super().__init__()
-        # concat 后维度翻倍，Linear 默认包含 bias
+        # Dimension doubles after concat, Linear includes bias by default
         self.gate_linear = nn.Linear(embed_dim * 2, embed_dim, bias=True)
         self.sigmoid = nn.Sigmoid()
 
@@ -1405,7 +1403,7 @@ class GatedVisualTextFusion(nn.Module):
         :return: fused_feat [batch_size, embed_dim]
         """
         concat_feat = torch.cat([visual_feat, text_feat], dim=-1)  # [B, 2*D]
-        gate_logits = self.gate_linear(concat_feat)  # [B, D], 包含 bias
+        gate_logits = self.gate_linear(concat_feat)  # [B, D], includes bias
         gate = self.sigmoid(gate_logits)  # [B, D], gate value ∈ (0,1)
 
         # gated weighted fusion
@@ -1424,12 +1422,12 @@ class MultiModalRankModel(torch.nn.Module):
             load_in_4bit=self.model_config['load_in_4bit']
         )
 
-        # 定义分类器结构（至少3层线性层）
+        # Define classifier structure (at least 3 linear layers)
         user_dim= 244
         all_hidden_size = 1654
         Attention_config = {
             "hidden_size": all_hidden_size+user_dim,
-            "intermediate_size": 4 * all_hidden_size # 通常是 hidden_size 的 4 倍
+            "intermediate_size": 4 * all_hidden_size # Usually 4 times the hidden_size
         }
         self.classifier = SelfAttentionClassifier(
             user_dim=user_dim,
@@ -1439,15 +1437,15 @@ class MultiModalRankModel(torch.nn.Module):
             config=Attention_config
             )        
         
-        # 创建文件夹，如果已存在则不报错
+        # Create folder, no error if exists
         os.makedirs(self.model_config['lora_checkpoint_dir'], exist_ok=True)
         classifier_base_ckpt = os.path.join(self.model_config['lora_checkpoint_dir'], 'classifier_base.pt')
         if dist.is_initialized():
             dist.barrier()
-            print("等待同时尝试加载")
+            print("Waiting for simultaneous loading attempt")
         if os.path.exists(classifier_base_ckpt):
             self.classifier.load_state_dict(torch.load(classifier_base_ckpt))
-            print("从先前的base model 加载classifier")
+            print("Load classifier from previous base model")
         else:
             if dist.is_initialized():
                 dist.barrier()
@@ -1456,9 +1454,9 @@ class MultiModalRankModel(torch.nn.Module):
                 print("Saved classifier and base_model.")
         if dist.is_initialized():
             dist.barrier()
-            print("主进程保存成功,继续运行")
+            print("Main process saved successfully, continue running")
 
-        # 笔记统计特征
+        # Note statistical features
         self.feature_max_values = {
             'rec_view_time': 269531514.0,
             'video_width': 7680.0,
@@ -1474,7 +1472,7 @@ class MultiModalRankModel(torch.nn.Module):
             'search_share_num': 7323.0,
             'share_num': 66777.0
         }
-        # 对字典中的值进行 log2 操作，并取上整
+        # Apply log2 operation to values in the dictionary and round up
         self.feature_max_values = {
             key: np.ceil(np.log2(value)) if value > 0 else value
             for key, value in self.feature_max_values.items()
@@ -1482,36 +1480,36 @@ class MultiModalRankModel(torch.nn.Module):
         self.feature_bits={feat: len(bin(int(max_value))) - 2 for feat, max_value in self.feature_max_values.items()}
         self.binary_encoders = nn.ModuleDict({
             feat: nn.Sequential(
-                nn.Linear(total_bits, total_bits*2, bias=True), #添加两层全连接层，增强模型表达能力
+                nn.Linear(total_bits, total_bits*2, bias=True), #Add two fully connected layers to enhance model expression ability
             ) for feat, total_bits in self.feature_bits.items()
         })
-        print("已初始化 binary_encoders")
-        # 用户特征
+        print("binary_encoders initialized")
+        # User features
         self.all_feat={'dense_feat9': 28.0, 'dense_feat26': 15.0, 'dense_feat37': 20.0, 'dense_feat34': 20.0, 'dense_feat25': 28.0, 'dense_feat11': 28.0, 'dense_feat20': 15.0, 'dense_feat13': 28.0, 'dense_feat10': 15.0, 'dense_feat14': 13.0, 'dense_feat24': 14.0, 'dense_feat1': 14.0, 'dense_feat33': 20.0, 'dense_feat28': 16.0, 'dense_feat36': 16.0, 'follows_num': 16.0, 'dense_feat2': 13.0, 'dense_feat38': 7.0, 'dense_feat18': 17.0, 'dense_feat32': 20.0, 'dense_feat12': 15.0, 'dense_feat35': 20.0, 'dense_feat31': 20.0, 'dense_feat8': 15.0}
         self.user_feat_bits={feat: len(bin(int(max_value))) - 2 for feat, max_value in self.all_feat.items()}
         self.user_feat_bits["age"]=11
         self.user_feat_bits["gender"]=2
         self.user_binary_encoders = nn.ModuleDict({
             feat: nn.Sequential(
-                nn.Linear(total_bits, total_bits*2, bias=True), #添加两层全连接层，增强模型表达能力
+                nn.Linear(total_bits, total_bits*2, bias=True), #Add two fully connected layers to enhance model expression ability
             ) for feat, total_bits in self.user_feat_bits.items()
         })
-        print("user_binary_encoders已初始化完成") 
+        print("user_binary_encoders initialization completed") 
 
-        self.cls_norm = RMSNorm(1536)  # hidden_size 是 mean_pool 的维度
-        self.feat_norm = RMSNorm(118)  # feat_dim 是 feat_tensor 的维度，例如 100
+        self.cls_norm = RMSNorm(1536)  # hidden_size is the dimension of mean_pool
+        self.feat_norm = RMSNorm(118)  # feat_dim is the dimension of feat_tensor, e.g. 100
         self.user_norm = RMSNorm(244)
         embed_dim = 1536
         self.fusion_module = GatedVisualTextFusion(embed_dim=embed_dim)
-        print("早期融合和晚期融合结合!")
+        print("Combination of early fusion and late fusion!")
 
         fusion_module_base_ckpt = os.path.join(self.model_config['lora_checkpoint_dir'], 'fusion_module_base.pt')
         if dist.is_initialized():
             dist.barrier()
-            print("等待同时尝试加载")
+            print("Waiting for simultaneous loading attempt")
         if os.path.exists(fusion_module_base_ckpt):
             self.fusion_module.load_state_dict(torch.load(fusion_module_base_ckpt))
-            print("从先前的base model 加载 fusion_module")
+            print("Load fusion_module from previous base model")
         else:
             if dist.is_initialized():
                 dist.barrier()
@@ -1520,24 +1518,24 @@ class MultiModalRankModel(torch.nn.Module):
                 print("Saved fusion_module and base_model.")
         if dist.is_initialized():
             dist.barrier()
-            print("主进程保存成功,继续运行")
+            print("Main process saved successfully, continue running")
 
-        #加载检查点 
+        #Load checkpoint 
         binary_encoders_path = os.path.join(self.model_config['lora_checkpoint_dir'], 'binary_encoders.pt')
         if os.path.exists(binary_encoders_path):
             self.binary_encoders.load_state_dict(torch.load(binary_encoders_path))
             print(f"Loaded binary_encoders parameters from {binary_encoders_path}")
-            print("已加载 binary_encoders")
+            print("Loaded binary_encoders")
         else:
-            print("初始化 binary_encoders from init")
+            print("Initialize binary_encoders from init")
 
         user_binary_encoders_path = os.path.join(self.model_config['lora_checkpoint_dir'], 'user_binary_encoders.pt')
         if os.path.exists(user_binary_encoders_path):
             self.user_binary_encoders.load_state_dict(torch.load(user_binary_encoders_path))
             print(f"Loaded user_binary_encoders parameters from {user_binary_encoders_path}")
-            print("已加载 user_binary_encoders_path")
+            print("Loaded user_binary_encoders_path")
         else:
-            print("初始化 user_binary_encoders from init")     
+            print("Initialize user_binary_encoders_path from init")     
 
         cls_norm_path = os.path.join(self.model_config['lora_checkpoint_dir'], 'cls_norm.pt')
         if os.path.exists(cls_norm_path):
@@ -1587,13 +1585,13 @@ class MultiModalRankModel(torch.nn.Module):
             param.requires_grad = False
 
         if self.model_config['gradient_checkpointing']:
-            print("开启梯度检查点")
+            print("Enable gradient checkpointing")
             self.model.gradient_checkpointing_enable()
             self.model.enable_input_require_grads()
         else:
-            print("梯度检查点关闭")
+            print("Gradient checkpointing disabled")
 
-        # 默认FP32
+        # Default FP32
         self.model = self.model.to(torch.float16)
         self.classifier = self.classifier.to(torch.float16)
         self.user_binary_encoders = self.user_binary_encoders.to(torch.float16)
@@ -1637,7 +1635,7 @@ class MultiModalRankModel(torch.nn.Module):
         print(f"Classifier: Try to load lora model from {self.model_config['lora_checkpoint_dir']}")
         classifier_lora_ckpt = os.path.join(self.model_config['lora_checkpoint_dir'], "classifier_lora")
         if os.path.exists(classifier_lora_ckpt):
-            # 初始化 LoRA 权重（注意不使用 from_pretrained）
+            # Initialize LoRA weights (note: do not use from_pretrained)
             peft_classifier_config = LoraConfig(
                 lora_alpha=32,
                 lora_dropout=0.1,
@@ -1648,7 +1646,7 @@ class MultiModalRankModel(torch.nn.Module):
             )
             classifier = PeftModel(classifier, peft_config=peft_classifier_config)
 
-            # 加载 LoRA adapter 权重
+            # Load LoRA adapter weights
             classifier.load_adapter(classifier_lora_ckpt, adapter_name="default", is_trainable=True)
             print(f"Loaded classifier LoRA adapter from {classifier_lora_ckpt}")
                 
@@ -1676,7 +1674,7 @@ class MultiModalRankModel(torch.nn.Module):
         print(f"fusion_module: Try to load lora model from {self.model_config['lora_checkpoint_dir']}")
         fusion_module_lora_ckpt = os.path.join(self.model_config['lora_checkpoint_dir'], "fusion_module_lora")
         if os.path.exists(fusion_module_lora_ckpt):
-            # 初始化 LoRA 权重（注意不使用 from_pretrained）
+            # Initialize LoRA weights (note: do not use from_pretrained)
             peft_fusion_module_config = LoraConfig(
                 lora_alpha=32,
                 lora_dropout=0.1,
@@ -1687,7 +1685,7 @@ class MultiModalRankModel(torch.nn.Module):
             )
             fusion_module = PeftModel(fusion_module, peft_config=peft_fusion_module_config)
 
-            # 加载 LoRA adapter 权重
+            # Load LoRA adapter weights
             fusion_module.load_adapter(fusion_module_lora_ckpt, adapter_name="default", is_trainable=True)
             print(f"Loaded fusion_module LoRA adapter from {fusion_module_lora_ckpt}")
 
@@ -1730,7 +1728,7 @@ class MultiModalRankModel(torch.nn.Module):
 
     def forward(self, batch_features,user_feat, **inputs):   
         # for key, value in inputs.items():
-        #     # 打印键和对应值的形状
+        #     # Print key and corresponding value shape
         #     print(f"Key: {key}, Shape: {value.shape}")
         # Key: input_ids, Shape: torch.Size([14, 512])
         # Key: attention_mask, Shape: torch.Size([14, 512])
@@ -1742,60 +1740,60 @@ class MultiModalRankModel(torch.nn.Module):
         outputs = self.model(**inputs, output_hidden_states=True)
 
 
-        visual_features = self.model.visual(hidden_states=inputs["pixel_values"], grid_thw=inputs["image_grid_thw"])  # ViT输出
-        # print(f"split 之前 visual_features.shape : {visual_features.shape}")
-        # 经过 split 之前，visual_features.shape : torch.Size([400, 1536])
-        # image_grid_thw.prod(-1) 用于计算张量在最后一个维度，计算每个图像的总块数（T*H*W）
+        visual_features = self.model.visual(hidden_states=inputs["pixel_values"], grid_thw=inputs["image_grid_thw"])  # ViT output
+        # print(f"visual_features.shape before split : {visual_features.shape}")
+        # Before split, visual_features.shape : torch.Size([400, 1536])
+        # image_grid_thw.prod(-1) is used to calculate the total number of patches per image (T*H*W)
         split_sizes = (inputs["image_grid_thw"].prod(-1) // self.model.visual.spatial_merge_size**2).tolist()
         # print(f"split_sizes:{split_sizes}") [100,100,..,100]
         visual_features = torch.split(visual_features, split_sizes)
-        # 经过 split 之后是一个元组，代表一个 batch 内每一个图像的 token 的 embedding
-        # split 之后: {[f.shape for f in visual_features]}")  [torch.Size([100, 1536])
-        # Qwen2-vl 中 已知模型的图片最大分辨率为280*280，patchsize为14 merge size为2，那么一个图片要占token 数=(H/PM)*(W/PM)=100 个
+        # After split, it is a tuple representing the embedding of each image's tokens in a batch
+        # After split: {[f.shape for f in visual_features]}")  [torch.Size([100, 1536])
+        # In Qwen2-vl, the maximum image resolution is 280*280, patchsize=14, merge size=2, so one image occupies 100 tokens: (H/PM)*(W/PM)=100
 
-        # 图像 token，将每100个图像token压缩成一个token
-        visual_features_stacked = torch.stack(visual_features)  # 堆叠 → [batch_size, 100, 1536]
+        # Image tokens, compress every 100 image tokens into one token
+        visual_features_stacked = torch.stack(visual_features)  # Stack → [batch_size, 100, 1536]
         # visual_features_stacked.shape:torch.Size([4, 100, 1536])
-        pooled_features = visual_features_stacked.mean(dim=1)  # 在token维度(dim=1)求平均 → [batch_size, 1536]
+        pooled_features = visual_features_stacked.mean(dim=1)  # Average on token dimension (dim=1) → [batch_size, 1536]
 
-        # 文本token
+        # Text tokens
         hidden_states = outputs.hidden_states[-1]
         # print(f"hidden_states.shape:{hidden_states.shape}")
-        # hidden_states.shape:torch.Size([13, 512, 1536]) 13个 note
+        # hidden_states.shape:torch.Size([13, 512, 1536]) 13 notes
         text_feature = hidden_states[:,-1]
 
-        #早期融合和晚期融合
+        # Early fusion and late fusion
         features = self.fusion_module(pooled_features, text_feature)
         features = features.to(self.classifier.base_model.model.layers[0].mlp.up_proj.lora_A.default.weight)
 
 
-        # # 构造 feature tensor： [B, F]
+        # # Construct feature tensor： [B, F]
         feat_tensors = []
         for feat, encoder in self.binary_encoders.items():
             feat_tensor = batch_features[feat]
             # print(f"feat_tensor:{feat_tensor}")
             # print(f"feat_tensor.shape:{feat_tensor.shape}")
-            encoded = torch.stack([encoder(i) for i in feat_tensor], dim=0)  # encoded 形状为 [B, 20]，B为正负样本总数，N为特征编码后的维度
-            # feat_tensor的每一个元素维度统一为 20
+            encoded = torch.stack([encoder(i) for i in feat_tensor], dim=0)  # encoded shape: [B, 20], B=total positive/negative samples, N=dimension after feature encoding
+            # Each element of feat_tensor is unified to dimension 20
             feat_tensors.append(encoded)
 
-        # # 拼接所有特征：[B, 5*20] = [B, 100]
-        feat_tensor = torch.cat(feat_tensors, dim=1)  # [B, 100]，B为正负样本总数，100为所有特征编码后的维度
+        # # Concatenate all features：[B, 5*20] = [B, 100]
+        feat_tensor = torch.cat(feat_tensors, dim=1)  # [B, 100], B=total positive/negative samples, 100=dimension after all feature encoding
 
         # # print(f"feat_tensor.shape:{feat_tensor.shape}")
-        # # 当 dim=1 时，堆叠操作会在第 1 维（列方向）合并这些张量，结果形状为 [2N, 5]
+        # # When dim=1, stack operation merges these tensors in column direction, result shape: [2N, 5]
 
         User_feats = []
         for feat, encoder in self.user_binary_encoders.items():
             user_feat_tensor = user_feat[feat]
-            # feat_tensor是一个张量列表，每一个张量代表当前数值的二进制转化后的张量
+            # feat_tensor is a tensor list, each tensor represents the binary converted tensor of the current value
             # print(f"feat_tensor:{feat_tensor}")
             # print(f"feat_tensor.shape:{feat_tensor.shape}")
-            encoded = torch.stack([encoder(i) for i in user_feat_tensor], dim=0)  # encoded 形状为 [B, 20]
-            # feat_tensor的每一个元素维度统一为 20
+            encoded = torch.stack([encoder(i) for i in user_feat_tensor], dim=0)  # encoded shape: [B, 20]
+            # Each element of feat_tensor is unified to dimension 20
             User_feats.append(encoded)
 
-        User_feats = torch.cat(User_feats, dim=1) # [B, X]，B为正负样本总数，X为所有特征编码后的维度
+        User_feats = torch.cat(User_feats, dim=1) # [B, X], B=total positive/negative samples, X=dimension after all feature encoding
         # print(f"User_feats.shape:{User_feats.shape}")
 
         features = self.cls_norm(features)         # [B, H]
@@ -1803,11 +1801,11 @@ class MultiModalRankModel(torch.nn.Module):
         User_feats = self.user_norm(User_feats)        # [B, F2]
         # print(f"User_feats.shape:{User_feats.shape}")
         # print(f"User_feats:{User_feats}")
-        # 判断第0维元素是否全部相同
+        # Check if all elements in dimension 0 are the same
         if torch.allclose(User_feats, User_feats[0].unsqueeze(0).expand_as(User_feats)):
-            User_feats = User_feats[0]  # 压缩成 [F2]
+            User_feats = User_feats[0]  # Compress to [F2]
         else:
-            raise ValueError("User_feats 不完全相同")
+            raise ValueError("User_feats are not identical")
 
         User_feats=User_feats.unsqueeze(dim=0)
 
@@ -1817,8 +1815,8 @@ class MultiModalRankModel(torch.nn.Module):
         # concat = torch.cat([concat, User_feats], dim=1)  # [B, H+F]
 
         # print(f"concat.shape:{concat.shape}")
-        # x指的是query与doc的嵌入向量
-        x = concat.unsqueeze(dim=0) # 从 [N, H+F] -> [1, N, H+F]
+        # x refers to the embedding vector of query and doc
+        x = concat.unsqueeze(dim=0) # From [N, H+F] -> [1, N, H+F]
         # print(f"x.shape:{x.shape}")
         # x.shape:torch.Size([1, 4, 3584])
 
@@ -1828,7 +1826,7 @@ class MultiModalRankModel(torch.nn.Module):
         return logits
 
     def save_pretrained(self, save_path):
-        # VLM保持冻结，所以不保存
+        # VLM remains frozen, so not saved
         self.model.save_pretrained(os.path.join(save_path, "VLM_lora"))
 
         # Merge LoRA adapter into base model
@@ -1836,17 +1834,16 @@ class MultiModalRankModel(torch.nn.Module):
             self.classifier.save_pretrained(os.path.join(save_path, "classifier_lora"))
             print("Saved classifier LoRA adapter.")
 
-        # 保存 binary_encoders（新增部分）
+        # Save binary_encoders (new part)
         binary_encoders_path = os.path.join(save_path, 'binary_encoders.pt')
         torch.save(self.binary_encoders.state_dict(), binary_encoders_path)
         user_binary_encoders_path = os.path.join(save_path, 'user_binary_encoders.pt')
         torch.save(self.user_binary_encoders.state_dict(), user_binary_encoders_path)
-        # RMSNorm 参数
+        # RMSNorm parameters
         torch.save(self.cls_norm.state_dict(), os.path.join(save_path, 'cls_norm.pt'))
         torch.save(self.feat_norm.state_dict(), os.path.join(save_path, 'feat_norm.pt'))
         torch.save(self.user_norm.state_dict(), os.path.join(save_path, 'user_norm.pt'))
-        # # 融合模块
+        # # Fusion module
         if isinstance(self.fusion_module, PeftModel):
             self.fusion_module.save_pretrained(os.path.join(save_path, "fusion_module_lora"))
             print("Saved fusion_module LoRA adapter.")
-

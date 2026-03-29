@@ -82,9 +82,9 @@ class BaseTrainer:
         self.fix_seed=True
         if self.fix_seed:
             set_seed(42) 
-            print("固定随机种子")
+            print("Fixed random seed")
         else:
-            print(" ！不！ 固定随机种子")
+            print("Random seed NOT fixed")
         self.num_processes = self.accelerator.num_processes
         self.step = 0
 
@@ -119,7 +119,7 @@ class BaseTrainer:
             {'params': [p for p in self.model.statistic_binary_encoders.parameters() if p.requires_grad], 'lr': optimizer_config['kwargs']['lr']},
             ]
 
-        # 创建优化器时传入参数分组
+        # Pass parameter groups when creating the optimizer
         self.optimizer = optimizer_class[optimizer_name](
             Multimodal_params, 
             **optimizer_config['kwargs']
@@ -172,36 +172,36 @@ class BaseTrainer:
 
 def get_top_p_notes(data, search_idx, p):
     """
-    从给定的search_idx中返回得分前p的note_idx
+    Return the note_idx with the top p scores from the given search_idx
     
-    参数:
-    data: 原始JSON数据（已解析为字典）
-    search_idx: 要查询的search索引
-    p: 0~1之间的比例，表示要返回前p的note
+    Parameters:
+    data: Raw JSON data (parsed as a dictionary)
+    search_idx: The search index to query
+    p: Ratio between 0 and 1, indicating the top p notes to return
     
-    返回:
-    得分前p的note_idx列表，按得分从高到低排序
+    Returns:
+    List of note_idx with the top p scores, sorted in descending order of score
     """
-    # 检查search_idx是否存在于数据中
+    # Check if search_idx exists in the data
     if search_idx not in data:
         return []
     
-    # 获取该search_idx下的所有note及其得分
+    # Get all notes and their scores under this search_idx
     note_scores = data[search_idx]
     
-    # 将note按得分从高到低排序
+    # Sort notes by score in descending order
     sorted_notes = sorted(note_scores.items(), key=lambda x: x[1], reverse=True)
     
-    # 计算需要返回的数量
+    # Calculate the number to return
     total = len(sorted_notes)
     if total == 0:
         return []
     
-    # 计算要返回的数量（向上取整）
-    count = max(1, int(round(total * p)))  # 确保至少返回1个
-    count = min(count, total)  # 不超过总数量
+    # Calculate the number to return (round up)
+    count = max(1, int(round(total * p)))  # Ensure at least 1 is returned
+    count = min(count, total)  # Do not exceed the total number
     
-    # 返回前count个note的索引
+    # Return the indices of the first count notes
     return [note[0] for note in sorted_notes[:count]]
 
 
@@ -209,13 +209,13 @@ class CrossRankMultiModalTrainer(BaseTrainer):
     """VLM cross-encoder model trainer"""
 
     def setup_model(self):
-        # 将最好的检查点复制到当前目录下
+        # Copy the best checkpoint to the current directory
         self._handle_previous_checkpoints()
         self.model = CrossRankMultiModalRankModel(self.config)
         if self.accelerator.is_main_process:
             print_trainable_params_stats(self.model)
         
-        # # 标注策略:取各模态随机 50% 的数据进行标注
+        # # Annotation strategy: randomly select 50% of data from each modality for annotation
         # self.top_p = 0.5
         # print(f"self.top_p:{self.top_p}")
 
@@ -314,10 +314,10 @@ class CrossRankMultiModalTrainer(BaseTrainer):
             disable=not self.accelerator.is_local_main_process
         )
         if self.step == 0:
-            print(f"直接开始测试")
+            print(f"Start testing directly")
             self.accelerator.wait_for_everyone()
             self.evaluate()
-            print(f"开始训练")
+            print(f"Start training")
 
         for step, batch in enumerate(self.train_data_loader):
             # loss = self._train_step(batch)
@@ -328,36 +328,36 @@ class CrossRankMultiModalTrainer(BaseTrainer):
                     if param.requires_grad:
                         freeze1=False
                 if not freeze1:
-                    print("未冻结 Qwen")
+                    print("Qwen NOT frozen")
                 else:
-                    print("已冻结 Qwen")
+                    print("Qwen frozen")
 
                 freeze2=True
                 for name, param in self.model.module.classifier.named_parameters():
                     if param.requires_grad:
                         freeze2=False
                 if not freeze2:
-                    print("未冻结 classifier")
+                    print("classifier NOT frozen")
                 else:
-                    print("已冻结 classifier")
+                    print("classifier frozen")
 
                 freeze3=True
                 for name, param in self.model.module.query_binary_encoders.named_parameters():
                     if param.requires_grad:
                         freeze3=False
                 if not freeze3:
-                    print("未冻结 query_binary_encoders")
+                    print("query_binary_encoders NOT frozen")
                 else:
-                    print("已冻结 query_binary_encoders")
+                    print("query_binary_encoders frozen")
 
                 freeze4=True
                 for name, param in self.model.module.statistic_binary_encoders.named_parameters():
                     if param.requires_grad:
                         freeze4=False
                 if not freeze4:
-                    print("未冻结 statistic_binary_encoders")
+                    print("statistic_binary_encoders NOT frozen")
                 else:
-                    print("已冻结 statistic_binary_encoders")
+                    print("statistic_binary_encoders frozen")
 
             loss = self._train_step_Multimodal(batch)
 
@@ -369,57 +369,57 @@ class CrossRankMultiModalTrainer(BaseTrainer):
 
     def compute_listmle_loss(self, logits): 
         """
-        参数说明：
-        logits : 模型输出的原始分数 [batch_size, n_items]
+        Parameter description:
+        logits : Raw scores output by the model [batch_size, n_items]
         
-        返回：
-        ListMLE损失值
+        Returns:
+        ListMLE loss value
         """
 
-        #确保logits缩放到[-8, 8]
-        logits = logits - logits.max(dim=1, keepdim=True).values  # 稳定性平移
+        # Ensure logits are scaled to [-8, 8]
+        logits = logits - logits.max(dim=1, keepdim=True).values  # Stability shift
         # if self.accelerator.is_local_main_process:
-        #     print(f"平移后logits:{logits}")
+        #     print(f"Logits after shift:{logits}")
         scale =1.0
         logits = scale * torch.tanh(logits / scale)
-        #tanh函数超过（-2,2）区间函数值变化不大
+        # The tanh function changes little beyond the (-2,2) interval
 
         # if self.accelerator.is_local_main_process:
-        #     print(f"放缩后logits:{logits}")
+        #     print(f"Logits after scaling:{logits}")
         assert not torch.isnan(logits).any(), "Logits contains NaN"
         assert not torch.isinf(logits).any(), "Logits contains Inf"
 
-        # 确保输入为float类型
+        # Ensure input is float type
         logits = logits.float()
         
         note_nums=logits.shape[1]
 
-        # 1. 计算指数值
+        # 1. Calculate exponential values
         exp_logits = torch.exp(logits)  # [batch_size, n_items]
         
-        # 2. 反向累积和计算（从右向左）
-        reversed_exp = torch.flip(exp_logits, dims=[1])  # 反转第二个维度，倒数第一排到第一
-        cumsums = torch.cumsum(reversed_exp, dim=1)      # 累积和 [batch_size, n_items]
-        cumsums = torch.flip(cumsums, dims=[1])          # 反转回原始顺序
+        # 2. Reverse cumulative sum calculation (right to left)
+        reversed_exp = torch.flip(exp_logits, dims=[1])  # Reverse the second dimension
+        cumsums = torch.cumsum(reversed_exp, dim=1)      # Cumulative sum [batch_size, n_items]
+        cumsums = torch.flip(cumsums, dims=[1])          # Reverse back to original order
         
-        # 3. 计算对数累积和
-        log_cumsums = torch.log(cumsums + 1e-5)        # 防止log(0)
+        # 3. Calculate log cumulative sum
+        log_cumsums = torch.log(cumsums + 1e-5)        # Prevent log(0)
         
-        # 4. 计算每个位置的损失项
+        # 4. Calculate loss term for each position
         loss_per_position = log_cumsums - logits        # [batch_size, n_items]
         loss_per_position = loss_per_position.to(torch.float16)
 
         # if self.accelerator.is_local_main_process:
         #     print(f"log_cumsums:{log_cumsums}")
             
-        # 5. 聚合损失
-        return loss_per_position.sum(dim=1).mean() / note_nums      # 批处理平均 
+        # 5. Aggregate loss
+        return loss_per_position.sum(dim=1).mean() / note_nums      # Batch average 
 
     def _train_step_Multimodal(self, batch):
         """Train one step"""
         self.model.train()
 
-        # Listwise训练
+        # Listwise training
         inputs = {k: v.to(self.accelerator.device) for k, v in batch["inputs"].items()}
         
         search_idxs = batch["search_idxs"]
@@ -432,7 +432,7 @@ class CrossRankMultiModalTrainer(BaseTrainer):
         labels = torch.tensor(batch["labels"])
         # print(f"labels:{labels}")
 
-        # 按query分组
+        # Group by query
         grouped_labels = defaultdict(list)
         for search_id, label in zip(search_idxs, labels):
             grouped_labels[search_id].append(label)
@@ -441,23 +441,23 @@ class CrossRankMultiModalTrainer(BaseTrainer):
         # if self.accelerator.is_local_main_process:
         #     print(f"query_lengths:{query_lengths}")
 
-        # modal_indexs的顺序是经过 shufle后的顺序
+        # The order of modal_indexs is after shuffling
         modal_indexs = batch["modal_indexs"]
         # print(f"modal_indexs:{modal_indexs}")
         # modal_indexs:[0, 1, 0, 0, 1, 0, 0, 0]
 
-        # argsort：按升序排列后，排好的值在原来列表中的索引
+        # argsort: after sorting in ascending order, the indices of the sorted values in the original list
         sorted_indices_per_query = [torch.argsort(label_seq) for label_seq in label_tensor]
 
-        # 根据 模态 拆分 文本模态和图像模态的输入，0 为文本，1 为图像
+        # Split text and image modalities by modality, 0 for text, 1 for image
         text_inputs={}
         figure_inputs={}
-        assert len(modal_indexs) == inputs["input_ids"].shape[0], "modal_indexs 与 input_ids batch size 不一致"
+        assert len(modal_indexs) == inputs["input_ids"].shape[0], "modal_indexs batch size inconsistent with input_ids"
 
 
-        # 混排listwise
+        # Shuffled listwise
         batch_query_features={k: [singleV.to(self.accelerator.device) for singleV in v] for k,v in batch["batch_query_features"].items() }
-        # 任意一个键对应的值是一个 list of Tensors
+        # Any key corresponds to a list of Tensors
 
         batch_statistic_features = {k: [singleV.to(self.accelerator.device) for singleV in v] for k,v in batch["batch_statistic_features"].items() }
 
@@ -471,15 +471,15 @@ class CrossRankMultiModalTrainer(BaseTrainer):
         # if self.accelerator.is_local_main_process:
         #     print(f"batch_logits:{batch_logits}")
 
-        assert len(batch_logits)==len(sorted_indices_per_query),"len(batch_logits)不等于len(sorted_indices_per_query)"
+        assert len(batch_logits)==len(sorted_indices_per_query),"len(batch_logits) not equal to len(sorted_indices_per_query)"
         
         total_loss = 0.0
         num_queries = 0
         for i, logits in enumerate(batch_logits):
-            logits = logits.squeeze(dim=-1)  # view(-1) 的作用：将张量展平为 1D
+            logits = logits.squeeze(dim=-1)  # view(-1): flatten tensor to 1D
             # if not self.accelerator.is_local_main_process:
             #     print(f"logits:{logits}")
-            # 按照 label 的顺序对混排的 logits 进行排序
+            # Sort shuffled logits according to label order
             single_sorted_indices_per_query=sorted_indices_per_query[i]
             # if not self.accelerator.is_local_main_process:
             #     print(f"single_sorted_indices_per_query:{single_sorted_indices_per_query}")
@@ -489,46 +489,46 @@ class CrossRankMultiModalTrainer(BaseTrainer):
             logits_sortedby_label = logits_sortedby_label.unsqueeze(dim=0)
             # if not self.accelerator.is_local_main_process:
             #     print(f"logits_sortedby_label.shape:{logits_sortedby_label.shape}")
-            # 计算这个 query 的 ListMLE loss
+            # Calculate ListMLE loss for this query
             loss_i = self.compute_listmle_loss(logits_sortedby_label)
             total_loss += loss_i
             num_queries += 1
 
-        # 最终 loss：所有 query loss 的平均
+        # Final loss: average of all query losses
         loss_multimodal = total_loss / num_queries if num_queries > 0 else total_loss
 
-        # # 将数据喂给单一模态模型前向传播,logits的顺序按照打乱后相应模态的顺序
+        # # Feed data to single modality model for forward propagation, logits order follows the shuffled modality order
         # # print(f"text_inputs['input_ids'].shape:{text_inputs['input_ids'].shape}")
         # # text_inputs['input_ids'].shape:torch.Size([9, 321])
 
-        # # text_logits的顺序是 shuffle 后的顺序
-        # # 单一文本模态给的序，混排蒸馏文本模态
+        # # text_logits order is shuffled order
+        # # Single text modality order, shuffled distillation for text modality
         # try:
         #     unique_search_idx_list = list(dict.fromkeys(search_idxs))
         #     print(f"unique_search_idx_list:{unique_search_idx_list}")
         #     text_note2logits = self.text_label[str(search_idx)]
-        #     # 单一模态对混排数据中的文本模态进行打分
+        #     # Single modality scores text modality in shuffled data
         #     text_note2logits = {k: v for k, v in text_note2logits.items() if int(k) in candidate_idxs}
         #     if len(text_note2logits)>0:
         #         sorted_text_note_idx=[note_idx for note_idx, _ in sorted(
         #             text_note2logits.items(),
-        #             key=lambda item: item[1],  # 按score排序
-        #             reverse=True               # 降序排列
+        #             key=lambda item: item[1],  # Sort by score
+        #             reverse=True               # Descending order
         #         )]
-        #         assert len(note_idxs)==len(logits),"note_idxs和logits不是一一对应的,有问题"
+        #         assert len(note_idxs)==len(logits),"note_idxs and logits are not one-to-one, error"
         #         note_to_logit = dict(zip(note_idxs, logits))
         #         print(f"len(sorted_text_note_idx):{len(sorted_text_note_idx)}")
-        #         # note_idxs的类型是 int 类型
-        #         # hunpai_text_logits是按照文本模态所给的序而产生的
+        #         # note_idxs type is int
+        #         # hunpai_text_logits generated according to text modality order
         #         hunpai_text_logits = [note_to_logit[int(note_idx)] for note_idx in sorted_text_note_idx]
         #         # hunpai_text_logits = torch.tensor(hunpai_text_logits).unsqueeze(dim=0)
         #         hunpai_text_logits = torch.stack(hunpai_text_logits).unsqueeze(dim=0)
         #         loss_text_kd = self.compute_listmle_loss(hunpai_text_logits)
         #     else:
-        #         print("当前query 下没有文本模态")
+        #         print("No text modality under current query")
         #         loss_text_kd = torch.tensor(0.0, device=self.accelerator.device, requires_grad=False)
         # except Exception as e:
-        #     print(f"search_idx:{search_idx}天生全是图像模态")                
+        #     print(f"search_idx:{search_idx} is all image modality natively")                
         #     loss_text_kd = torch.tensor(0.0, device=self.accelerator.device, requires_grad=False)
 
         # if self.accelerator.is_local_main_process:
@@ -537,30 +537,30 @@ class CrossRankMultiModalTrainer(BaseTrainer):
         # # print(f"figure_inputs['input_ids'].shape:{figure_inputs['input_ids'].shape}")
         # # figure_inputs['input_ids'].shape:torch.Size([5, 512])
 
-        # # 单一图像模态给的序，混排蒸馏图像模态
-        # # 如果当前query下没有图像模态，没有截断也没有
+        # # Single image modality order, shuffled distillation for image modality
+        # # If no image modality under current query, nothing
         # try:
         #     figure_note2logits = self.figure_label[str(search_idx)]
         #     figure_note2logits = {k: v for k, v in figure_note2logits.items() if int(k) in note_idxs}
         #     if len(figure_note2logits)>0:
         #         sorted_figure_note_idx=[note_idx for note_idx, _ in sorted(
         #             figure_note2logits.items(),
-        #             key=lambda item: item[1],  # 按score排序
-        #             reverse=True               # 降序排列
+        #             key=lambda item: item[1],  # Sort by score
+        #             reverse=True               # Descending order
         #         )]
         #         print(f"len(sorted_figure_note_idx):{len(sorted_figure_note_idx)}")
         #         note_to_logit = dict(zip(note_idxs, logits))
-        #         # hunpai_figure_logits是按照图像模态所给的序而产生的
+        #         # hunpai_figure_logits generated according to image modality order
         #         hunpai_figure_logits = [note_to_logit[int(note_idx)] for note_idx in sorted_figure_note_idx]
         #         # hunpai_figure_logits = torch.tensor(hunpai_figure_logits).unsqueeze(dim=0)
         #         hunpai_figure_logits = torch.stack(hunpai_figure_logits).unsqueeze(dim=0)
         #         loss_figure_kd = self.compute_listmle_loss(hunpai_figure_logits)
         #     else:
-        #         print("当前query 下截断后没有图像模态")
+        #         print("No image modality after truncation under current query")
         #         loss_figure_kd = torch.tensor(0.0, device=self.accelerator.device, requires_grad=False)
         # except Exception as e:
         #     print(f"len(figure_inputs):{len(figure_inputs)}")
-        #     print(f"search_idx:{search_idx}天生全是文本模态")
+        #     print(f"search_idx:{search_idx} is all text modality natively")
         #     loss_figure_kd = torch.tensor(0.0, device=self.accelerator.device, requires_grad=False)
                     
         # if self.accelerator.is_local_main_process:
@@ -568,44 +568,44 @@ class CrossRankMultiModalTrainer(BaseTrainer):
 
 
         # # loss from multimidal
-        # # 混排数据集->logits->只标注各单一模态的前 10%
-        # # 单一图像模态给的序
+        # # Shuffled dataset->logits->only annotate top 10% of each single modality
+        # # Single image modality order
         # if len(figure_inputs) > 0:
-        #     # 问题：1:对于没点击的，模态随机，需使用同一个随机产生的结果
-        #     # multimodal_exp_1_modal_index是全量训练集的，multimodal_train_modal_index只是混排的训练集，不冲突
-        #     # figure_label和 text_label 都是基于 cleaned_search_train 产生的，不包含有 note_idx 重复的
-        #     # 混排数据集需避开这些数据，所以通过 skip_search避开
+        #     # Problem 1: For unclicked, modality is random, use the same random result
+        #     # multimodal_exp_1_modal_index is for full training set, multimodal_train_modal_index only for shuffled training set, no conflict
+        #     # figure_label and text_label are generated based on cleaned_search_train, no duplicate note_idx
+        #     # Shuffled dataset avoids these data via skip_search
             
         #     n = len(sorted_figure_note_idx)
         #     fig_k = round(n * self.top_p)
-        #     fig_k = max(1, fig_k)           # 确保至少取1个元素
-        #     # 这个是取单一模态标注的前p%的 note_idx 作为标注
+        #     fig_k = max(1, fig_k)           # Ensure at least 1 element
+        #     # Take top p% note_idx from single modality annotation
         #     # sorted_figure_note_idx = sorted_figure_note_idx[:fig_k]
-        #     # 取随机p%的 note_idx 作为标注
+        #     # Take random p% note_idx as annotation
         #     random_figure_note_idx = random.sample(sorted_figure_note_idx, min(fig_k, n))
         # else:
         #     print(f"len(figure_inputs):{len(figure_inputs)}")
 
-        # # 单一文本模态给的序
+        # # Single text modality order
         # if len(text_inputs) > 0:
         #     m = len(sorted_text_note_idx)
         #     text_k = round(m * self.top_p)
-        #     text_k = max(1, text_k)           # 确保至少取1个元素
+        #     text_k = max(1, text_k)           # Ensure at least 1 element
         #     # sorted_text_note_idx = sorted_text_note_idx[:text_k]
-        #     # 取随机p%的 note_idx 作为标注
+        #     # Take random p% note_idx as annotation
         #     random_text_note_idx = random.sample(sorted_text_note_idx, min(text_k, m))
         # else:
         #     print(f"len(text_inputs):{len(text_inputs)}")
 
-        # # 混排标注损失
+        # # Shuffled annotation loss
         # if len(text_inputs)>0 and len(figure_inputs)>0:
         #     hunpai_note_idxs= random_figure_note_idx + random_text_note_idx
-        #     print(f"混排标注量:{len(hunpai_note_idxs)}")
-        #     # print(f"图像前 0.1:{sorted_figure_note_idx}")
-        #     # print(f"文本前 0.1:{sorted_text_note_idx}")
+        #     print(f"Shuffled annotation count:{len(hunpai_note_idxs)}")
+        #     # print(f"Top 0.1 of image:{sorted_figure_note_idx}")
+        #     # print(f"Top 0.1 of text:{sorted_text_note_idx}")
 
         #     hunpai_logits = []
-        #     # logits_sortedby_label这里就是混排的 label顺序,需要把note_idxs也要恢复成 label 顺序的 notes 顺序
+        #     # logits_sortedby_label is shuffled label order, need to restore note_idxs to label order
         #     note_idxs = torch.tensor(note_idxs)
         #     note_idxs_sortedby_label= note_idxs[sorted_indices]
         #     # print(f"note_idxs_sortedby_label:{note_idxs_sortedby_label}")
@@ -762,4 +762,3 @@ if __name__ == "__main__":
     trainer = trainer_class[config['trainer']](config)
     print(f"Starting Training")
     trainer.train()
-

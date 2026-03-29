@@ -11,14 +11,14 @@ need_log_feat = ['dense_feat26', 'dense_feat37', 'dense_feat34', 'dense_feat20',
 
 
 df = pd.read_parquet("dataset/PocessedQilin/user_feat/train-00000-of-00001.parquet")
-# 特征处理函数
+# Feature processing function
 def process_user_feat(feat, value):
-    # 性别处理
+    # Gender processing
     if feat == "gender":
         gender_map = {"male": [1, 0], "female": [0, 1], "unknown": [0, 0], "": [0, 0]}
         return gender_map.get(value, [0, 0])
     
-    # 年龄处理
+    # Age processing
     if feat == "age":
         age_buckets = ['1-12', '13-15', '16-18', '19-22', '23-25', '26-30', '31-35', '36-40', '40+', 'unknown', '']
         binary_str_1=  [1 if value == age else 0 for age in age_buckets]
@@ -28,17 +28,17 @@ def process_user_feat(feat, value):
     if feat in number_feat:
         if feat in need_log_feat:
             value = np.ceil(np.log2(value)) if int(value) > 0 else value
-            # 转换为整数
+            # Convert to integer
         
         value = int(value)
         
-        # 获取最大二进制位数
-        max_val = all_feat.get(feat, 16)  # 默认16位
+        # Get the maximum number of binary bits
+        max_val = all_feat.get(feat, 16)  # Default 16 bits
         total_bits=int(len(bin(int(max_val))) - 2)
-        # 数值转二进制字符串并补零
+        # Convert number to binary string and pad with zeros
         binary_str = bin(value)[2:].zfill(total_bits)
         
-        # 转换为整数列表
+        # Convert to integer list
         return [int(bit) for bit in binary_str]
 
 for feat in all_feat.keys():
@@ -47,7 +47,7 @@ for feat in all_feat.keys():
 
 path= "dataset/PocessedQilin/user_feat/train-00000-of-00001.parquet"
 
-# 保存新文件（前缀 log-）
+# Save new file (prefix: log-)
 filename = os.path.basename(path)
 new_path = os.path.join(os.path.dirname(path), f"log-{filename}")
 df.to_parquet(new_path, index=False)
@@ -56,13 +56,13 @@ print(f"Saved processed file: {new_path}")
 
 df = pd.read_parquet(path)
 first_row = df.head(1).squeeze().tolist()
-print(f"修改前:{first_row}")
+print(f"Before modification:{first_row}")
 
-# 构造 log 文件路径
+# Construct log file path
 dirname = os.path.dirname(path)
 basename = os.path.basename(path)
 log_path = os.path.join(dirname, f"log-{basename}")
 
 df = pd.read_parquet(log_path)
 first_row_log = df.head(1).squeeze().tolist()
-print(f"修改后:{first_row_log}")
+print(f"After modification:{first_row_log}")

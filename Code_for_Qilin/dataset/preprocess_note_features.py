@@ -4,7 +4,7 @@ from datasets import load_dataset
 import os
 import torch
 
-# 配置参数（与训练代码保持一致）
+# Configuration parameters (consistent with training code)
 all_feat= {
     'rec_view_time': 269531514.0,
     'video_width': 7680.0,
@@ -49,7 +49,7 @@ feature_max_values= {
     'share_num': 66777.0
 }
 
-# 最大值取log
+# Apply logarithm to maximum values
 log_feature_max_values = {
     key: np.ceil(np.log2(value)) if int(value) > 0 else value
     for key, value in feature_max_values.items()
@@ -57,42 +57,42 @@ log_feature_max_values = {
 
 feature_max_bits = {}
 for feat, max_val in log_feature_max_values.items():
-    # 计算二进制位数
-    max_bits = len(bin(int(max_val))) - 2  # bin(5) -> '0b101'，实际位数为3
+    # Calculate the number of binary bits
+    max_bits = len(bin(int(max_val))) - 2  # bin(5) -> '0b101', actual bits: 3
     total_bits = max_bits
     feature_max_bits[feat] = total_bits
 
-# 特征处理函数
+# Feature processing function
 def process_feature(feat_name, value):
-    """处理单个特征值"""
-    # 处理特殊值：NaN或None转换为0
+    """Process a single feature value"""
+    # Handle special values: convert NaN or None to 0
     if pd.isna(value) or value is None:
         value = 0.0
 
-    # 确保值不超过最大值
+    # Ensure the value does not exceed the maximum
     max_val = feature_max_values.get(feat_name, 0.0)
     if value > max_val:
         value = max_val
 
-    # 对特定特征应用log转换（排除列表中的特征）
+    # Apply log transformation to specific features (exclude features in the list)
     if feat_name in all_feat:
         value = np.ceil(np.log2(value)) if int(value) > 0 else value
 
-    # 转换为整数
+    # Convert to integer
     value = int(value)
     
-    # 获取二进制位数
-    total_bits = feature_max_bits.get(feat_name, 16)  # 默认16位
+    # Get the number of binary bits
+    total_bits = feature_max_bits.get(feat_name, 16)  # Default 16 bits
     
-    # 数值转二进制字符串并补零
+    # Convert number to binary string and pad with zeros
     binary_str = bin(value)[2:].zfill(total_bits)
     binary_str = [int(bit) for bit in binary_str]
-    # 转换为0/1张量
+    # Convert to 0/1 tensor
     # binary_tensor = torch.tensor([int(bit) for bit in binary_str], dtype=torch.float32)
-    # 转换为整数列表
+    # Convert to integer list
     return binary_str
 
-# 加载笔记数据
+# Load note data
 file_paths = [
     "dataset/PocessedQilin/notes/train-00000-of-00005.parquet",
     "dataset/PocessedQilin/notes/train-00001-of-00005.parquet",
@@ -103,36 +103,35 @@ file_paths = [
 # corpus = load_dataset("parquet", data_files=file_paths, split="train")
 
 
-# 批量处理每个文件
+# Process each file in batches
 for path in file_paths:
     print(f"Processing: {path}")
     
-    # 加载 parquet 数据
+    # Load parquet data
     df = pd.read_parquet(path)
     
-    # 处理特征列
+    # Process feature columns
     for feat in log_feature_max_values.keys():
         df[feat] = df[feat].apply(lambda val: process_feature(feat, val))
     
-    # 保存新文件（前缀 log-）
+    # Save new file (prefix: log-)
     filename = os.path.basename(path)
     new_path = os.path.join(os.path.dirname(path), f"log-{filename}")
     df.to_parquet(new_path, index=False)
     print(f"Saved processed file: {new_path}")
 
 print("All files processed and saved.")
-# # 对于每一个文件，读取修改前后的第一条数据，打印
+# # For each file, read and print the first row before and after modification
 # for path in file_paths:
 #     df = pd.read_parquet(path)
 #     first_row = df.head(1).squeeze().tolist()
-#     print(f"修改前:{first_row}")
+#     print(f"Before modification:{first_row}")
 
-#     # 构造 log 文件路径
+#     # Construct log file path
 #     dirname = os.path.dirname(path)
 #     basename = os.path.basename(path)
 #     log_path = os.path.join(dirname, f"log-{basename}")
 
 #     df = pd.read_parquet(log_path)
 #     first_row_log = df.head(1).squeeze().tolist()
-#     print(f"修改后:{first_row_log}")
-
+#     print(f"After modification:{first_row_log}")

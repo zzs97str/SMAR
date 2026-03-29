@@ -6,14 +6,14 @@ cat config/default_config.yaml.sample > config/default_config.yaml
 cuda_devices=${CUDA_VISIBLE_DEVICES:-"Not Set"}
 echo "cuda_devices: $cuda_devices"
 
-# 计算单机 GPU 数量
+# Calculate the number of GPUs per machine
 if [ "$cuda_devices" != "Not Set" ]; then
     num_gpus=$(echo "$cuda_devices" | tr ',' ' ' | wc -w)
 else
     num_gpus=$(nvidia-smi --query-gpu=name --format=csv,noheader | wc -l)
 fi
 
-# 计算总进程数 (world_size)
+# Calculate the total number of processes (world_size)
 WORLD_SIZE=$((num_gpus * NUM_MACHINES))
 
 echo "num_machines: $NUM_MACHINES"

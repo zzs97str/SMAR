@@ -21,7 +21,7 @@ class CrossEncoderTrainingDataProcessor:
         tokenizer_name = kwargs.get('tokenizer_name_or_path')
         batch_size = kwargs.get('batch_size')
         max_length = kwargs.get('max_length')
-        # 负样本池
+        # Negative sample pool
         self.negative_pool = kwargs.get('negative_pool', 'search_result_details_with_idx')
         print(f"negative_pool: {self.negative_pool}")
         self.train_data_key = kwargs.get('train_data_key', 'search_train')
@@ -45,7 +45,7 @@ class CrossEncoderTrainingDataProcessor:
 
 
     def load_data(self):
-        print(f"此时的数据集是：{self.data_path}")
+        print(f"The current dataset is: {self.data_path}")
         print("loading CrossEncoderTrainingData dataset")
         file_paths = ["dataset/notes/log-train-00000-of-00005.parquet",
                     "dataset/notes/log-train-00001-of-00005.parquet",
@@ -64,7 +64,7 @@ class CrossEncoderTrainingDataProcessor:
         return ret
 
     def collate_fn(self, batch):
-        # 正负样本构造
+        # Construct positive and negative samples
         queries = []
         notes = []
         labels = []
@@ -72,13 +72,13 @@ class CrossEncoderTrainingDataProcessor:
         for item in batch:
             query = item["query"]
             search_idx = item["search_idx"]
-            # impression_result_details是一个列表，每个元素是一个字典，包含了用户点击的笔记的索引和点击标签
-            # impression_result_details是 train数据集的search_result_details_with_idx
+            # impression_result_details is a list, each element is a dictionary containing the index of the note clicked by the user and the click label
+            # impression_result_details is search_result_details_with_idx of the train dataset
             impression_result_details = item[self.negative_pool]
-            # 获取正样本
+            # Get positive samples
             positives = [impression_result['note_idx'] for impression_result in impression_result_details if impression_result['click'] == 1]
             assert len(positives) > 0, 'No positive samples found for query: ' + query
-            # 随机选择一个正样本
+            # Randomly select one positive sample
             positive_idx = random.choice(positives)
             note_content = self.get_note_content(positive_idx)
             queries.append(query)
@@ -98,7 +98,7 @@ class CrossEncoderTrainingDataProcessor:
                 notes.append(note_content)
                 labels.append(0)
 
-        # query_note_pairs是一个列表，每个元素都是一个字符串，格式为 [查询] [SEP] [文档内容]
+        # query_note_pairs is a list, each element is a string in the format [query] [SEP] [document content]
         query_note_pairs = [f"{q} [SEP] {n}" for q, n in zip(queries, notes)]
         
         inputs = self.tokenizer(
@@ -110,8 +110,8 @@ class CrossEncoderTrainingDataProcessor:
         )
         
         labels = torch.tensor(labels, dtype=torch.float)
-        # 每个查询生成 ‌1个正样本对‌ 和 ‌N个负样本对‌（N = negative_samples）。
-        # 样本对格式为 [查询] [SEP] [文档内容]，通过分隔符 [SEP] 区分查询和文档
+        # Generate 1 positive sample pair and N negative sample pairs for each query (N = negative_samples).
+        # The sample pair format is [query] [SEP] [document content], distinguished by the separator [SEP]
 
         return {"inputs": inputs, "labels": labels}
 
@@ -131,7 +131,7 @@ class CrossEncoderTrainingDataProcessor_PairWise:
         tokenizer_name = kwargs.get('tokenizer_name_or_path')
         batch_size = kwargs.get('batch_size')
         max_length = kwargs.get('max_length')
-        # 负样本池
+        # Negative sample pool
         self.negative_pool = kwargs.get('negative_pool', 'search_result_details_with_idx')
         print(f"negative_pool: {self.negative_pool}")
         self.train_data_key = kwargs.get('train_data_key', 'search_train')
@@ -173,7 +173,7 @@ class CrossEncoderTrainingDataProcessor_PairWise:
 
 
     def load_data(self):
-        print(f"此时的数据集是：{self.data_path}")
+        print(f"The current dataset is: {self.data_path}")
         print("loading CrossEncoderTrainingData dataset")
         file_paths = ["dataset/notes/log-train-00000-of-00005.parquet",
                     "dataset/notes/log-train-00001-of-00005.parquet",
@@ -198,49 +198,49 @@ class CrossEncoderTrainingDataProcessor_PairWise:
         return ret
 
     def collate_fn_old(self, batch):
-        # 收集三元组
+        # Collect triplets
         q_pos_list, q_neg_list = [], []
         for item in batch:
             query = item["query"]
             impression_result_details = item[self.negative_pool]
 
-            # 正样本池：click==1，按 page_time 降序
+            # Positive sample pool: click==1, sorted in descending order by page_time
             pos_pool = sorted(
                 [d for d in impression_result_details if (int(d['click'])==1 and not pd.isna(d['page_time']))],
                 key=lambda x: x['page_time'],
                 reverse=True
-            )[:10]  # 添加切片操作，截断至最多10个
+            )[:10]  # Add slicing to truncate to max 10 items
 
-            # 对每个正样本，构造若干负样本
+            # For each positive sample, construct several negative samples
             for pos in pos_pool:
                 pos_time = pos['page_time']
                 pos_idx = pos['note_idx']
 
-                # 负样本候选：要么未点击，要么点击但 page_time 小于当前正样本
+                # Negative sample candidates: either not clicked, or clicked but page_time is less than current positive sample
                 neg_cands = [
                     d for d in impression_result_details
                     if (int(d['click']) == 0)
                     or (int(d['click']) == 1 and (not pd.isna(d['page_time'])) and d.get('page_time', 0) < pos_time)
                 ]
-                # 若不足，则从全语料随机补
+                # If insufficient, randomly supplement from the entire corpus
                 if len(neg_cands) < self.negative_samples:
-                    # 需要补多少个
+                    # Number of samples to supplement
                     k = self.negative_samples - len(neg_cands)
-                    # 从整个语料库的索引里随机取 k 个作为负样本
+                    # Randomly select k indices from the entire corpus as negative samples
                     extra_idxs = random.sample(range(len(self.corpus)), k=k)
-                    # 原有的 neg_cands 里已经是 dict 了，先取它们的 note_idx
+                    # Existing neg_cands are dicts, first get their note_idx
                     neg_idxs = [d['note_idx'] for d in neg_cands] + extra_idxs
                 else:
                     neg_idxs = random.sample([d['note_idx'] for d in neg_cands], self.negative_samples)
 
-                # 将 (q, d+) 与每个 (q, d-) 分别记录
+                # Record (q, d+) and each (q, d-) separately
                 pos_text = self.get_note_content(pos_idx)
                 for neg_idx in neg_idxs:
                     neg_text = self.get_note_content(neg_idx)
                     q_pos_list.append(f"{query} [SEP] {pos_text}")
                     q_neg_list.append(f"{query} [SEP] {neg_text}")
 
-        # 分别编码正负对
+        # Encode positive and negative pairs separately
         inp_pos = self.tokenizer(
             q_pos_list,
             padding="max_length", truncation=True,
@@ -254,17 +254,17 @@ class CrossEncoderTrainingDataProcessor_PairWise:
             return_tensors="pt"
         )
 
-        #在典型的 pair-wise 训练（例如用 Hinge Loss 或 Logistic Loss）中，我们并不需要对每个正负对再额外构造一个 labels 张量。相反，正负对自身的顺序就蕴含了监督信号
+        # In typical pair-wise training (e.g., using Hinge Loss or Logistic Loss), we don't need an additional labels tensor for each positive-negative pair. Instead, the order of positive-negative pairs itself contains the supervision signal
         return {"inp_pos": inp_pos, "inp_neg": inp_neg}
 
     def collate_fn(self, batch):
-        # 收集三元组
+        # Collect triplets
         q_pos_list, q_neg_list = [], []
-        # 收集原始特征值
+        # Collect raw feature values
         pos_batch_feat_vals = {feat: [] for feat in self.feature_max_values}
         neg_batch_feat_vals = {feat: [] for feat in self.feature_max_values}
         batch_features = {}
-        # 收集用户特征值
+        # Collect user feature values
         pos_user_feat_vals = {feat: [] for feat in self.all_feat}
         neg_user_feat_vals = {feat: [] for feat in self.all_feat}
         user_feat_vals = {feat: [] for feat in self.all_feat}
@@ -275,36 +275,36 @@ class CrossEncoderTrainingDataProcessor_PairWise:
             impression_result_details = item[self.negative_pool]
             user_idx = item["user_idx"]
 
-            # 正样本池：click==1，按 page_time 降序
+            # Positive sample pool: click==1, sorted in descending order by page_time
             pos_pool = sorted(
                 [d for d in impression_result_details if (int(d['click'])==1 and not pd.isna(d['page_time']))],
                 key=lambda x: x['page_time'],
                 reverse=True
-            )[:10]  # 添加切片操作，截断至最多10个
+            )[:10]  # Add slicing to truncate to max 10 items
 
-            # 对每个正样本，构造若干负样本
+            # For each positive sample, construct several negative samples
             for pos in pos_pool:
                 pos_time = pos['page_time']
                 pos_idx = pos['note_idx']
 
 
-                # 负样本候选：要么未点击，要么点击但 page_time 小于当前正样本
+                # Negative sample candidates: either not clicked
                 neg_cands = [
                     d for d in impression_result_details
                     if (int(d['click']) == 0)
                 ]
-                # 若不足，则从全语料随机补
+                # If insufficient, randomly supplement from the entire corpus
                 if len(neg_cands) < self.negative_samples:
-                    # 需要补多少个
+                    # Number of samples to supplement
                     k = self.negative_samples - len(neg_cands)
-                    # 从整个语料库的索引里随机取 k 个作为负样本
+                    # Randomly select k indices from the entire corpus as negative samples
                     extra_idxs = random.sample(range(len(self.corpus)), k=k)
-                    # 原有的 neg_cands 里已经是 dict 了，先取它们的 note_idx
+                    # Existing neg_cands are dicts, first get their note_idx
                     neg_idxs = [d['note_idx'] for d in neg_cands] + extra_idxs
                 else:
                     neg_idxs = random.sample([d['note_idx'] for d in neg_cands], self.negative_samples)
 
-                # 将 (q, d+) 与每个 (q, d-) 分别记录
+                # Record (q, d+) and each (q, d-) separately
                 pos_text = self.get_note_content(pos_idx)
                 for neg_idx in neg_idxs:
                     neg_text = self.get_note_content(neg_idx)
@@ -313,8 +313,7 @@ class CrossEncoderTrainingDataProcessor_PairWise:
 
                     for feat, thresholds in self.feature_max_values.items():
                         raw_value_pos = self.get_note_feat(feat, pos_idx)
-                        # print(f"binary_vec_pos:{binary_vec_pos}")
-                        # binary_vec_pos实际上是一个张量
+                        # binary_vec_pos is actually a tensor
                         binary_vec_pos = torch.tensor(raw_value_pos,dtype=torch.float32)
                         pos_batch_feat_vals[feat].append(binary_vec_pos)
 
@@ -323,7 +322,7 @@ class CrossEncoderTrainingDataProcessor_PairWise:
                         neg_batch_feat_vals[feat].append(binary_vec_neg)
 
                     for feat, thresholds in self.all_feat.items():
-                        feat_value = self.user_feat[user_idx][feat] #数值型或者字符串
+                        feat_value = self.user_feat[user_idx][feat] # Numeric or string
                         feat_value = torch.tensor(feat_value, dtype=torch.float32)
                         pos_user_feat_vals[feat].append(feat_value)
                         neg_user_feat_vals[feat].append(feat_value)
@@ -334,15 +333,13 @@ class CrossEncoderTrainingDataProcessor_PairWise:
         for feat, thresholds in self.all_feat.items():
             user_feat_vals[feat]=  pos_user_feat_vals[feat] + neg_user_feat_vals[feat]
         
-        # print(f"len(batch_features['image_num']):{len(batch_features['image_num'])}")
-        # 转成 tensor 并放到 device
+        # Convert to tensor and move to device
         # batch_features = {
         #     feat: [torch.tensor(val, dtype=torch.long) for val in vals]
         #     for feat, vals in batch_features.items()
         # }
         
-        # print(f"batch_features['image_num'].shape:{len(batch_features['image_num'])}")
-        # 分别编码正负对
+        # Encode positive and negative pairs separately
         inp_pos = self.tokenizer(
             q_pos_list,
             padding="max_length", truncation=True,
@@ -355,7 +352,6 @@ class CrossEncoderTrainingDataProcessor_PairWise:
             max_length=self.max_length,
             return_tensors="pt"
         )
-        # print(f"inp_neg['input_ids'].shape:{inp_neg['input_ids'].shape}")
         return {
             "inp_pos": inp_pos,
             "inp_neg": inp_neg,
@@ -425,7 +421,7 @@ class CrossEncoderTestDataProcessor:
         data = load_dataset("parquet", data_files ="dataset/search_test/train-00000-of-00001.parquet", split="train")
 
         data = data.select(range(min(self.sample_num, len(data))))
-        # 将数据均匀划分为 num_processes 个分片，每个进程（GPU）处理一个分片
+        # Evenly split the data into num_processes shards, each process (GPU) handles one shard
         data = data.shard(num_shards=self.num_processes, index=self.local_rank, contiguous=True)
         return data
 
@@ -447,21 +443,21 @@ class CrossEncoderTestDataProcessor:
         notes = []
         note_idxs = []
         search_idxs = []
-        # 收集原始特征值
+        # Collect raw feature values
         batch_features = {feat: [] for feat in self.feature_max_values}
         user_feat_vals = {feat: [] for feat in self.all_feat}
-        # 标记正负样本用于计算 AUC
+        # Mark positive and negative samples for AUC calculation
         Pos_Neg=[]
 
         for item in batch:
             query = item["query"]
             user_idx = item["user_idx"]
             search_idx = item['search_idx'] if 'search_idx' in item else item['request_idx']
-            # candidates为 xhs的曝光结果，为一个列表，是 note_idx 的列表，如果没有分数，则默认为0.0
+            # candidates are the exposure results of xhs, a list of note_idx, default to 0.0 if no score
             candidates = item[self.results_key]
             if type(candidates[0]) == int:
                 candidates = [[x, 0.0] for x in candidates]
-            # 按照分数降序排列，sort默认升序，reverse=True表示反转，即降序
+            # Sort in descending order by score, sort defaults to ascending, reverse=True means descending
             candidates = sorted(candidates, key=lambda x: x[1], reverse=True)
             if self.rerank_depth is not None:
                 candidates = candidates[:self.rerank_depth]
@@ -483,12 +479,10 @@ class CrossEncoderTestDataProcessor:
                 for feat, thresholds in self.feature_max_values.items():
                     raw_value = self.get_note_feat(feat, note_idx)
                     binary_vec = torch.tensor(raw_value,dtype=torch.float32)
-                    # print(f"binary_vec_pos:{binary_vec_pos}")
-                    # binary_vec_pos实际上是一个张量
                     batch_features[feat].append(binary_vec)
 
                 for feat, thresholds in self.all_feat.items():
-                    feat_value = self.user_feat[user_idx][feat] #数值型或者字符串
+                    feat_value = self.user_feat[user_idx][feat] # Numeric or string
                     feat_value = torch.tensor(feat_value, dtype=torch.float32)
                     user_feat_vals[feat].append(feat_value)
 
@@ -501,8 +495,7 @@ class CrossEncoderTestDataProcessor:
             max_length=self.max_length,
             return_tensors="pt"
         )
-        # print(Pos_Neg)
-        # 测试集输入为：用户 query，对应的 note 内容
+        # Test set input: user query, corresponding note content
         return {"inputs": inputs, "note_idxs": note_idxs, "search_idxs": search_idxs,"features": batch_features, "Pos_Neg": Pos_Neg,"user_feat": user_feat_vals}
 
     def get_dataloader(self):
@@ -592,12 +585,12 @@ class VLMCrossEncoderTrainingDataProcessor:
             impression_result_details = item[self.negative_pool]
             
             positives = [impression_result['note_idx'] for impression_result in impression_result_details if impression_result['click'] == 1]
-            # 可能有多个正例
+            # May have multiple positive examples
             assert len(positives) > 0, 'No positive samples found for query: ' + query
             if self.use_recent_clicked_note_images:
                 recent_clicked_note_idxs = item.get('recent_clicked_note_idxs', [])[:10]
                 recent_clicked_note_images = []
-                # 如果启用最近点击的笔记图像，则处理这些图像并拼接
+                # If using recently clicked note images, process and concatenate these images
                 for note_idx in recent_clicked_note_idxs:
                     note_content = self.get_note_content(note_idx)
                     recent_clicked_note_images.append(note_content['image'])
@@ -608,7 +601,7 @@ class VLMCrossEncoderTrainingDataProcessor:
 
             positive_idx = random.choice(positives)
             note_content = self.get_note_content(positive_idx)
-            # 选择一个正例，获取其内容，包括文本和图像
+            # Select one positive example and get its content, including text and image
 
             # Template of conversation
             conversation = [{
@@ -762,14 +755,14 @@ class VLMCrossEncoderTrainingDataProcessor_pairwise:
         return ret
 
     def collate_fn(self, batch):
-        # 收集三元组
+        # Collect triplets
         pos_query_list, neg_query_list = [], []
         pos_images_list, neg_images_list = [], []
-        # 收集原始特征值
+        # Collect raw feature values
         pos_batch_feat_vals = {feat: [] for feat in self.feature_max_values}
         neg_batch_feat_vals = {feat: [] for feat in self.feature_max_values}
         batch_features = {}
-        # 收集用户特征值
+        # Collect user feature values
         pos_user_feat_vals = {feat: [] for feat in self.all_feat}
         neg_user_feat_vals = {feat: [] for feat in self.all_feat}
         user_feat_vals = {feat: [] for feat in self.all_feat}
@@ -779,16 +772,14 @@ class VLMCrossEncoderTrainingDataProcessor_pairwise:
             impression_result_details = item[self.negative_pool]
             user_idx = item["user_idx"]
 
-            # positives = [impression_result['note_idx'] for impression_result in impression_result_details if impression_result['click'] == 1]
-            # 正样本池：click==1，按 page_time 降序
+            # Positive sample pool: click==1, sorted in descending order by page_time
             pos_pool = sorted(
                 [d for d in impression_result_details if (int(d['click'])==1 and not pd.isna(d['page_time']))],
                 key=lambda x: x['page_time'],
                 reverse=True
-            )[:10]  # 添加切片操作，截断至最多10个
+            )[:10]  # Add slicing to truncate to max 10 items
 
-            # 可能有多个正例
-            # assert len(pos_pool) > 0, 'No positive samples found for query: ' + query
+            # May have multiple positive examples
             if len(pos_pool)==0:
                 print(f"No positive samples found for query: {query}")
                 continue
@@ -796,7 +787,7 @@ class VLMCrossEncoderTrainingDataProcessor_pairwise:
             if self.use_recent_clicked_note_images:
                 recent_clicked_note_idxs = item.get('recent_clicked_note_idxs', [])[:10]
                 recent_clicked_note_images = []
-                # 如果启用最近点击的笔记图像，则处理这些图像并拼接
+                # If using recently clicked note images, process and concatenate these images
                 for note_idx in recent_clicked_note_idxs:
                     note_content = self.get_note_content(note_idx)
                     recent_clicked_note_images.append(note_content['image'])
@@ -805,9 +796,8 @@ class VLMCrossEncoderTrainingDataProcessor_pairwise:
                 else:
                     query_image = self.default_image
 
-            # 对每个正样本，构造若干负样本
+            # For each positive sample, construct several negative samples
             for pos in pos_pool:
-                # positive_idx = random.choice(positives)
                 pos_idx = pos['note_idx']
                 note_content = self.get_note_content(pos_idx)
                 
@@ -820,7 +810,7 @@ class VLMCrossEncoderTrainingDataProcessor_pairwise:
                 
                 for neg_idx in negatives:
                     # Template of conversation
-                    # 正样本
+                    # Positive sample
                     conversation = [{
                         "role": "user",
                         "content": [
@@ -832,7 +822,7 @@ class VLMCrossEncoderTrainingDataProcessor_pairwise:
                     pos_query_list.append(conversation)
                     pos_images_list.append(vertical_concat_images([query_image, note_content['image']]) if self.use_recent_clicked_note_images else note_content['image'])
 
-                    # 负样本
+                    # Negative sample
                     note_content = self.get_note_content(neg_idx)
                     conversation = [{
                         "role": "user",
@@ -845,11 +835,10 @@ class VLMCrossEncoderTrainingDataProcessor_pairwise:
                     neg_query_list.append(conversation)
                     neg_images_list.append(vertical_concat_images([query_image, note_content['image']]) if self.use_recent_clicked_note_images else note_content['image'])
                     
-                    #其他特征
+                    # Other features
                     for feat, thresholds in self.feature_max_values.items():
                         raw_value_pos = self.get_note_feat(feat, pos_idx)
-                        # print(f"binary_vec_pos:{binary_vec_pos}")
-                        # binary_vec_pos实际上是一个张量
+                        # binary_vec_pos is actually a tensor
                         binary_vec_pos = torch.tensor(raw_value_pos,dtype=torch.float16)
                         pos_batch_feat_vals[feat].append(binary_vec_pos)
 
@@ -858,7 +847,7 @@ class VLMCrossEncoderTrainingDataProcessor_pairwise:
                         neg_batch_feat_vals[feat].append(binary_vec_neg)
 
                     for feat, thresholds in self.all_feat.items():
-                        feat_value = self.user_feat[user_idx][feat] #数值型或者字符串
+                        feat_value = self.user_feat[user_idx][feat] # Numeric or string
                         feat_value = torch.tensor(feat_value, dtype=torch.float16)
                         pos_user_feat_vals[feat].append(feat_value)
                         neg_user_feat_vals[feat].append(feat_value)
@@ -887,8 +876,6 @@ class VLMCrossEncoderTrainingDataProcessor_pairwise:
             return_tensors="pt"
         )
 
-        # print(f"inp_pos.shape:{inp_pos.input_ids.shape}")
-        # print(f"inp_neg.shape:{inp_neg.input_ids.shape}")       
         return {
             "inp_pos": inp_pos,
             "inp_neg": inp_neg,
@@ -976,10 +963,10 @@ class VLMCrossEncoderTestDataProcessor(VLMCrossEncoderTrainingDataProcessor):
         images = []
         note_idxs = []
         search_idxs = []
-        # 收集原始特征值
+        # Collect raw feature values
         batch_features = {feat: [] for feat in self.feature_max_values}
         user_feat_vals = {feat: [] for feat in self.all_feat}
-        # 标记正负样本用于计算 AUC
+        # Mark positive and negative samples for AUC calculation
         Pos_Neg=[]
         
         for item in batch:
@@ -1007,7 +994,7 @@ class VLMCrossEncoderTestDataProcessor(VLMCrossEncoderTrainingDataProcessor):
                     query_image = self.default_image
 
             for candidate in candidates:
-                # 每一个 query 都会有若干个结果需要和其算相似性
+                # Each query will have several results to calculate similarity with
                 note_idx = int(candidate[0])
                 note_content = self.get_note_content(note_idx)
                 
@@ -1023,7 +1010,7 @@ class VLMCrossEncoderTestDataProcessor(VLMCrossEncoderTrainingDataProcessor):
                 images.append(vertical_concat_images([query_image, note_content['image']]) if self.use_recent_clicked_note_images else note_content['image'])
                 note_idxs.append(note_idx)
                 search_idxs.append(search_idx)
-                # 记录当前自然结果是否被点击
+                # Record whether the current natural result was clicked
                 for note in search_result_details_with_idx:
                     if note["note_idx"]==  note_idx:
                         pos_or_neg= note["click"]
@@ -1032,12 +1019,10 @@ class VLMCrossEncoderTestDataProcessor(VLMCrossEncoderTrainingDataProcessor):
                 for feat, thresholds in self.feature_max_values.items():
                     raw_value = self.get_note_feat(feat, note_idx)
                     binary_vec = torch.tensor(raw_value,dtype=torch.float16)
-                    # print(f"binary_vec_pos:{binary_vec_pos}")
-                    # binary_vec_pos实际上是一个张量
                     batch_features[feat].append(binary_vec)
 
                 for feat, thresholds in self.all_feat.items():
-                    feat_value = self.user_feat[user_idx][feat] #数值型或者字符串
+                    feat_value = self.user_feat[user_idx][feat] # Numeric or string
                     feat_value = torch.tensor(feat_value, dtype=torch.float16)
                     user_feat_vals[feat].append(feat_value)
 
@@ -1051,7 +1036,7 @@ class VLMCrossEncoderTestDataProcessor(VLMCrossEncoderTrainingDataProcessor):
             return_tensors="pt"
         )
         
-        # note_idxs记录了所有 batch 内，每一个query 对应的曝光的笔记数量总的note_idx
+        # note_idxs records the total note_idx of the exposed notes corresponding to each query in all batches
         return {
             "inputs": inputs, 
             "note_idxs": note_idxs, 
@@ -1136,7 +1121,7 @@ class MultiModalTrainingDataProcessor_listwise:
 
     def get_note_content(self, note_idx, modal):
         if modal==1:
-            # 图像模态
+            # Image modality
             note = self.corpus[note_idx]
             image = self.default_image
             image_path = note['image_path']
@@ -1157,7 +1142,7 @@ class MultiModalTrainingDataProcessor_listwise:
             }
         elif modal==0:
             note = self.corpus[note_idx]
-            # 文本模态
+            # Text modality
             ret = ''
             ret += note['note_title']
             ret += note['note_content']
@@ -1181,50 +1166,49 @@ class MultiModalTrainingDataProcessor_listwise:
         return ret
 
     def collate_fn(self, batch):
-        # 收集三元组
+        # Collect triplets
         query_list = []
         images_list = []
         labels = []
-        # 收集原始特征值
+        # Collect raw feature values
         batch_features = {feat: [] for feat in self.feature_max_values}
-        # # 收集用户特征值
+        # Collect user feature values
         user_feat_vals = {feat: [] for feat in self.all_feat}
 
-        # collect_strat_time = time.time()
         for item in batch:
             query = item["query"]
             impression_result_details = item[self.negative_pool]
             user_idx = item["user_idx"]
             search_idx = item["search_idx"]
-            #listwise 输入，输入是一个列表，输出一个分数
-            # 输入：用户query+<用户特征>+候选列表[结果1,结果2,...,结果n]+[结果统计特征]+位置编码(应该不需要加位置编码)
-            # 正样本池：click==1，按 page_time 降序
+            # listwise input, input is a list, output a score
+            # Input: user query + <user features> + candidate list [result1, result2,..., resultn] + [result statistical features] + position encoding (should not need to add position encoding)
+            # Positive sample pool: click==1, sorted in descending order by page_time
             pos_pool = sorted(
                 [d for d in impression_result_details if (int(d['click'])==1 and not pd.isna(d['page_time']))],
                 key=lambda x: x['page_time'],
                 reverse=True
             )
-            pos_pool = pos_pool[:20] # 添加切片操作，截断至最多20个
+            pos_pool = pos_pool[:20] # Add slicing to truncate to max 20 items
             sub_pos_pool=[d for d in impression_result_details if (int(d['click'])==1 and pd.isna(d['page_time']))][:5]
 
-            # 计算正样本总数
+            # Calculate total number of positive samples
             num_pos = len(pos_pool) + len(sub_pos_pool)
-            # 可能有多个正例
+            # May have multiple positive examples
             if num_pos == 0:
                 print(f"No positive samples found for query: {query}")
                 continue
 
-            # 负样本池
-            neg_pool = [d for d in impression_result_details if int(d['click'])==0 ][:10]  # 添加切片操作，截断至最多10个
+            # Negative sample pool
+            neg_pool = [d for d in impression_result_details if int(d['click'])==0 ][:10]  # Add slicing to truncate to max 10 items
 
             total_pool = pos_pool + sub_pos_pool + neg_pool
-            # 随机打乱顺序
+            # Randomly shuffle the order
             random.shuffle(total_pool)
 
             if self.use_recent_clicked_note_images:
                 recent_clicked_note_idxs = item.get('recent_clicked_note_idxs', [])[:10]
                 recent_clicked_note_images = []
-                # 如果启用最近点击的笔记图像，则处理这些图像并拼接
+                # If using recently clicked note images, process and concatenate these images
                 for note_idx in recent_clicked_note_idxs:
                     note_content = self.get_note_content(note_idx)
                     recent_clicked_note_images.append(note_content['image'])
@@ -1235,10 +1219,9 @@ class MultiModalTrainingDataProcessor_listwise:
 
             for i, note in enumerate(total_pool):
                 note_idx = note['note_idx']
-                # print(type(note_idx))
                 modal = self.model_index[str(search_idx)][str(note_idx)]["modal"]
-                # modal==0 对应 文本模态
-                # modal==1 对应 图像模态
+                # modal==0 corresponds to text modality
+                # modal==1 corresponds to image modality
                 note_content = self.get_note_content(note_idx,modal)
                 label = self.model_index[str(search_idx)][str(note_idx)]["position"]
                 
@@ -1254,25 +1237,23 @@ class MultiModalTrainingDataProcessor_listwise:
                 query_list.append(conversation)
                 images_list.append(vertical_concat_images([query_image, note_content['image']]) if self.use_recent_clicked_note_images else note_content['image'])
                 labels.append(label)
-                # 文本模态 只有query和纯文字title+内容+空白图 图像模态：query+title+图像
+                # Text modality only has query and pure text title+content+blank image Image modality: query+title+image
                 
-                #其他特征
+                # Other features
                 for feat, thresholds in self.feature_max_values.items():
                     note_features = self.get_note_feat(feat, note_idx)
-                    # print(f"binary_vec_pos:{binary_vec_pos}")
-                    # binary_vec_pos实际上是一个张量
                     binary_vec = torch.tensor(note_features,dtype=torch.float16)
                     batch_features[feat].append(binary_vec)
 
                 for feat, thresholds in self.all_feat.items():
-                    feat_value = self.user_feat[user_idx][feat] #数值型或者字符串
+                    feat_value = self.user_feat[user_idx][feat] # Numeric or string
                     feat_value = torch.tensor(feat_value, dtype=torch.float16)
                     user_feat_vals[feat].append(feat_value)
 
-        # position 从 0 开始，依次是点击时长倒排，点击没有时长，没有点击, 由于 labels可能是不连续整数，这里负责映射回连续整数
+        # Position starts from 0, sorted by click duration descending, click without duration, no click. Since labels may be discontinuous integers, map back to continuous integers here
         if len(labels) != len(set(labels)) and len(labels) > 0:
             print(f"labels:{labels}")
-            raise ValueError("列表中存在重复的整数")
+            raise ValueError("Duplicate integers exist in the list")
         sorted_labels = sorted(labels)
         mapping = {x: i for i, x in enumerate(sorted_labels)}
         labels = [mapping[x] for x in labels]
@@ -1288,10 +1269,6 @@ class MultiModalTrainingDataProcessor_listwise:
             return_tensors="pt"
         )
 
-        # print(f"inputs.shape:{inputs.input_ids.shape}")
-        # inputs.shape:torch.Size([4, 512])
-        # print(f"labels.shape:{len(labels)}")
-        # labels.shape:4   
         return {
             "inputs": inputs,
             "labels": labels,
@@ -1299,7 +1276,7 @@ class MultiModalTrainingDataProcessor_listwise:
             "user_feat": user_feat_vals
         }
 
-    # shuffle=True行为：在每个epoch开始时，DataLoader会将整个数据集随机打乱（全局洗牌），影响batch之间的顺序
+    # shuffle=True behavior: At the beginning of each epoch, DataLoader randomly shuffles the entire dataset (global shuffling), affecting the order between batches
     def get_dataloader(self):
         return DataLoader(
             self.dataset,
@@ -1384,10 +1361,10 @@ class MultiModalTestDataProcessor(MultiModalTrainingDataProcessor_listwise):
         labels = []
         note_idxs = []
         search_idxs = []
-        # 收集原始特征值
+        # Collect raw feature values
         batch_features = {feat: [] for feat in self.feature_max_values}
         user_feat_vals = {feat: [] for feat in self.all_feat}
-        # 标记正负样本用于计算 AUC
+        # Mark positive and negative samples for AUC calculation
         Pos_Neg=[]
         
         for item in batch:
@@ -1403,19 +1380,19 @@ class MultiModalTestDataProcessor(MultiModalTrainingDataProcessor_listwise):
                 candidates = candidates[:self.rerank_depth]
             search_result_details_with_idx = item["search_result_details_with_idx"]
 
-            # 正样本池：click==1，按 page_time 降序
+            # Positive sample pool: click==1, sorted in descending order by page_time
             pos_pool = [d for d in search_result_details_with_idx if int(d['click'])==1]
-            # 负样本池
+            # Negative sample pool
             neg_pool = [d for d in search_result_details_with_idx if int(d['click'])==0 ]
             total_pool = pos_pool+neg_pool
             
-            # 随机打乱顺序
+            # Randomly shuffle the order
             random.shuffle(total_pool)
 
             if self.use_recent_clicked_note_images:
                 recent_clicked_note_idxs = item.get('recent_clicked_note_idxs', [])[:10]
                 recent_clicked_note_images = []
-                # 如果启用最近点击的笔记图像，则处理这些图像并拼接
+                # If using recently clicked note images, process and concatenate these images
                 for note_idx in recent_clicked_note_idxs:
                     note_content = self.get_note_content(note_idx)
                     recent_clicked_note_images.append(note_content['image'])
@@ -1426,10 +1403,9 @@ class MultiModalTestDataProcessor(MultiModalTrainingDataProcessor_listwise):
 
             for i, note in enumerate(total_pool):
                 note_idx = note['note_idx']
-                # print(type(note_idx))
                 modal = self.labels[str(search_idx)][str(note_idx)]["modal"]
-                # modal==0 对应 文本模态
-                # modal==1 对应 图像模态
+                # modal==0 corresponds to text modality
+                # modal==1 corresponds to image modality
                 note_content = self.get_note_content(note_idx,modal)
                 label = self.labels[str(search_idx)][str(note_idx)]["position"]
                 
@@ -1451,17 +1427,15 @@ class MultiModalTestDataProcessor(MultiModalTrainingDataProcessor_listwise):
                     if note["note_idx"]==  note_idx:
                         pos_or_neg= note["click"]
                 Pos_Neg.append(int(pos_or_neg))
-                # Pos_Neg的顺序是打乱的顺序
+                # The order of Pos_Neg is the shuffled order
                 
                 for feat, thresholds in self.feature_max_values.items():
                     raw_value = self.get_note_feat(feat, note_idx)
                     binary_vec = torch.tensor(raw_value,dtype=torch.float16)
-                    # print(f"binary_vec_pos:{binary_vec_pos}")
-                    # binary_vec_pos实际上是一个张量
                     batch_features[feat].append(binary_vec)
 
                 for feat, thresholds in self.all_feat.items():
-                    feat_value = self.user_feat[user_idx][feat] #数值型或者字符串
+                    feat_value = self.user_feat[user_idx][feat] # Numeric or string
                     feat_value = torch.tensor(feat_value, dtype=torch.float16)
                     user_feat_vals[feat].append(feat_value)
 

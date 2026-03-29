@@ -20,11 +20,11 @@ import torch.nn.functional as F
 
 
 def is_main_process():
-    # 通常主进程的 LOCAL_RANK 为 0
+    # Usually LOCAL_RANK of main process is 0
     return os.environ.get("LOCAL_RANK", "0") == "0"
 
 
-### 定义Transformer分类器模型
+### Define Transformer Classifier Model
 class RMSNorm(nn.Module):
     def __init__(self, hidden_size, eps=1e-6):
         """
@@ -49,15 +49,15 @@ class SelfAttention(nn.Module):
         assert dim % n_heads == 0
         self.qkv_proj = nn.Linear(dim, dim * 3, bias=True)
         self.out_proj = nn.Linear(dim, dim, bias=True)
-        # # 定义每个 head 独立的可学习 alpha 参数，初始值设为0.0
+        # # Define learnable alpha parameter for each head independently, initial value 0.0
         # self.alpha = nn.Parameter(torch.zeros(n_heads),requires_grad=True)
         self.step=0
         self.vis_dir="/path_to_CrossRank/output/CrossRankEXP/fig"
 
     def forward(self, x):
-        B, N, C = x.size() # B为1，N 为正负样本数 ，C 为特征维度
+        B, N, C = x.size() # B=1, N=number of positive/negative samples, C=feature dimension
         # print(f"B,N,C={B,N,C}") B,N,C=(1, 4, 3584)
-        # 3 表示qkv
+        # 3 represents qkv
         qkv = self.qkv_proj(x).reshape(B, N, 3, self.n_heads, self.head_dim)
         # print(f"qkv.shape={qkv.shape}") qkv.shape=torch.Size([1, 4, 3, 2, 1792])
         q, k, v = qkv[:, :, 0], qkv[:, :, 1], qkv[:, :, 2]  # (B, N, n_heads, head_dim)
@@ -66,21 +66,21 @@ class SelfAttention(nn.Module):
         v = v.transpose(1, 2)
 
         attn_scores = (q @ k.transpose(-2, -1)) / (self.head_dim ** 0.5) # (B, n_heads, N, N)
-        # 在对角线上加不同 head 的 alpha
+        # Add alpha for each head on the diagonal
         identity = torch.eye(N, device=attn_scores.device, dtype=attn_scores.dtype).unsqueeze(0).unsqueeze(0)  # (1,1,N,N)
 
-        # 每个head一个偏置值，这里设置为1/N，可调整
+        # One bias value per head, set to 1/N here, adjustable
         weights = torch.full((self.n_heads,), fill_value=3.0 / N, device=attn_scores.device, dtype=attn_scores.dtype)
         attn_scores = attn_scores + weights.view(1, self.n_heads, 1, 1) * identity
         attn_probs = F.softmax(attn_scores, dim=-1)
 
-        # === 可视化第1和第2个head的注意力分布和统计信息 ===
+        # === Visualize attention distribution and statistics for head 1 and 2 ===
         if B == 1 and is_main_process() and self.step % 200 ==0:
             head_indices = [0, 1]
             for idx in head_indices:
                 attn_matrix = attn_probs[0, idx].detach().cpu().numpy()  # (N, N)
 
-                # 1. 画热力图
+                # 1. Draw heatmap
                 plt.figure(figsize=(6, 5))
                 sns.heatmap(attn_matrix, cmap='viridis', square=True,
                             xticklabels=True, yticklabels=True, cbar=True)
@@ -91,19 +91,19 @@ class SelfAttention(nn.Module):
                 plt.savefig(save_path)
                 plt.close()
 
-                # 2. 计算每行均值和方差
+                # 2. Calculate mean and variance per row
                 mean_per_row = attn_probs[0, idx].mean(dim=-1).detach().cpu()
                 var_per_row = attn_probs[0, idx].var(dim=-1).detach().cpu()
 
-                # print(f"[Head {idx}] 每行注意力方差:\n{var_per_row}")
+                # print(f"[Head {idx}] Variance of attention per row:\n{var_per_row}")
 
-        # === attention输出 ===
+        # === Attention output ===
         attn_output = attn_probs @ v  # (B, n_heads, N, head_dim)
-        # 合并所有头部
+        # Merge all heads
         attn_output = attn_output.transpose(1, 2).contiguous()
 
         # # FlashAttention
-        # # qkv应该的维度是 (batch_size, seqlen, 3, nheads, headdim)
+        # # qkv should have dimension (batch_size, seqlen, 3, nheads, headdim)
         # # FlashAttention forward only supports head dimension at most 256
         # attn_output = flash_attn_qkvpacked_func(qkv, dropout_p=0.1, softmax_scale=None, causal=False,
         #                   window_size=(-1, -1), alibi_slopes=None, deterministic=False)
@@ -119,23 +119,23 @@ class SelfAttention(nn.Module):
 class CrossAttention(nn.Module):
     def __init__(self, user_dim, embed_dim, n_heads, vis_dir="/path_to_CrossRank/output/multimodal/fig"):
         """
-        user_dim : 用户特征维度
-        embed_dim : 内容嵌入维度
-        n_heads : 注意力头数
+        user_dim : User feature dimension
+        embed_dim : Content embedding dimension
+        n_heads : Number of attention heads
         """
         super().__init__()
         self.n_heads = n_heads
         self.head_dim = embed_dim // n_heads
         assert embed_dim % n_heads == 0
 
-        # 用户特征映射到 embed_dim 作为 query
+        # Map user features to embed_dim as query
         self.user_proj_v = nn.Linear(user_dim, embed_dim, bias=True)
         self.user_proj_k = nn.Linear(user_dim, embed_dim, bias=True)
 
-        # 内容 Key/Value 映射
+        # Content Key/Value projection
         self.q_proj = nn.Linear(embed_dim, embed_dim, bias=True)
 
-        # 输出 projection
+        # Output projection
         self.out_proj = nn.Linear(embed_dim, embed_dim, bias=True)
 
         self.vis_dir = vis_dir
@@ -149,13 +149,13 @@ class CrossAttention(nn.Module):
         """
         B, N, C = content_embeds.size()
 
-        # === 嵌入特征生成 query ===
+        # === Generate query from embedding features ===
         # [B, N, embed_dim] → [B,N, embed_dim]
         q = self.q_proj(content_embeds)  # (B,N, embed_dim)
         # reshape for multi-head
         q = q.view(B, N,self.n_heads, self.head_dim).transpose(1, 2)  # (B, n_heads, N, head_dim)
 
-        # === 用户生成 key, value ===
+        # === Generate key, value from user features ===
         # [B, 1, embed_dim] → [B, 1, embed_dim]
         k = self.user_proj_k(user_feat)
         v = self.user_proj_v(user_feat)
@@ -163,11 +163,11 @@ class CrossAttention(nn.Module):
         k = k.view(B, 1, self.n_heads, self.head_dim).transpose(1,2)  # (B, n_heads, 1, head_dim)
         v = v.view(B, 1, self.n_heads, self.head_dim).transpose(1,2)  # (B, n_heads, 1, head_dim)
 
-        # === 计算 Attention scores ===
+        # === Calculate Attention scores ===
         attn_scores = (q @ k.transpose(-2, -1)) / (self.head_dim ** 0.5)  # (B, n_heads, N, 1)
         attn_probs = F.softmax(attn_scores, dim=-1)  # (B, n_heads, N, 1)
 
-        # === 可选：可视化注意力 ===
+        # === Optional: Visualize attention ===
         # if B == 1 and self.step % 200 == 0:
         #     attn_matrix = attn_probs[0].detach().cpu().numpy()  # (n_heads, 1, N)
         #     for idx in range(min(2, self.n_heads)):
@@ -178,15 +178,15 @@ class CrossAttention(nn.Module):
         #         plt.savefig(save_path)
         #         plt.close()
 
-        # === Attention 输出 ===
+        # === Attention output ===
         attn_output = attn_probs @ v  # (B, n_heads, N, head_dim)
         attn_output=attn_output.transpose(1, 2).contiguous()
         # (B, N, n_heads, head_dim)
 
-        # 合并 heads
+        # Merge heads
         attn_output = attn_output.reshape(B, N, C)  # (B, N,embed_dim)
 
-        # 输出 projection
+        # Output projection
         output = self.out_proj(attn_output)  # (B, embed_dim)
 
         self.step += 1
@@ -266,7 +266,7 @@ class CrossRankMultiModalRankModel(torch.nn.Module):
         for key in self.model_config:
             self.hf_model_config.__dict__[key] = self.model_config[key]
 
-        # 以下是 Qwen3-reranker
+        # Qwen3-reranker
         self.model = AutoModelForCausalLM.from_pretrained(
             "model/Qwen3-Reranker-4B",
             config=self.hf_model_config,
@@ -274,21 +274,21 @@ class CrossRankMultiModalRankModel(torch.nn.Module):
         )
         self.mean_pooling = MeanPooling()
 
-        # 以下是 BERT
+        # BERT
         # self.model = AutoModel.from_pretrained(
         #     "model/bert-base-chinese/",
         #     config=self.hf_model_config,
         #     trust_remote_code=True
         # )
-        # # 新增
-        # self.model.pooler = None  # 移除池化层
+        # # New
+        # self.model.pooler = None  # Remove pooling layer
 
-        # 定义分类器结构（至少3层线性层）
+        # Define classifier structure (at least 3 linear layers)
         statistic_dim= 244
         all_hidden_size = 2640
         Attention_config = {
             "hidden_size": all_hidden_size,
-            "intermediate_size": 4 * all_hidden_size # 通常是 hidden_size 的 4 倍
+            "intermediate_size": 4 * all_hidden_size # Usually 4x hidden_size
         }
         self.classifier = SelfAttentionClassifier(
             statistic_dim = statistic_dim,
@@ -298,15 +298,15 @@ class CrossRankMultiModalRankModel(torch.nn.Module):
             config=Attention_config
             )        
         
-        # 创建文件夹，如果已存在则不报错
+        # Create directory, no error if exists
         os.makedirs(self.model_config['lora_checkpoint_dir'], exist_ok=True)
         classifier_base_ckpt = os.path.join(self.model_config['lora_checkpoint_dir'], 'classifier_base.pt')
         if dist.is_initialized():
             dist.barrier()
-            print("等待同时尝试加载")
+            print("Waiting to load together")
         if os.path.exists(classifier_base_ckpt):
             self.classifier.load_state_dict(torch.load(classifier_base_ckpt))
-            print("从先前的base model 加载classifier")
+            print("Loaded classifier from previous base model")
         else:
             if dist.is_initialized():
                 dist.barrier()
@@ -315,7 +315,7 @@ class CrossRankMultiModalRankModel(torch.nn.Module):
                 print("Saved classifier and base_model.")
         if dist.is_initialized():
             dist.barrier()
-            print("主进程保存成功,继续运行")
+            print("Main process saved successfully, continuing execution")
 
         self.query_feature_bits={
             'query_feat_5':2,
@@ -327,7 +327,7 @@ class CrossRankMultiModalRankModel(torch.nn.Module):
             ) for feat, total_bits in self.query_feature_bits.items()
         })
 
-        # candidate 侧特征
+        # Candidate side features
         self.max_statistic_bits={
             "candidate_feat_1":4,
             "candidate_feat_2":4,
@@ -347,22 +347,22 @@ class CrossRankMultiModalRankModel(torch.nn.Module):
         self.query_norm = RMSNorm(20)
         self.statistic_norm = RMSNorm(60)
 
-        #加载检查点 
+        # Load checkpoint
         query_binary_encoders_path = os.path.join(self.model_config['lora_checkpoint_dir'], 'query_binary_encoders.pt')
         if os.path.exists(query_binary_encoders_path):
             self.query_binary_encoders.load_state_dict(torch.load(query_binary_encoders_path))
             print(f"Loaded query_binary_encoders parameters from {query_binary_encoders_path}")
-            print("已加载 query_binary_encoders")
+            print("Loaded query_binary_encoders")
         else:
-            print("初始化 query_binary_encoders from init")
+            print("Initializing query_binary_encoders from init")
 
         statistic_binary_encoders_path = os.path.join(self.model_config['lora_checkpoint_dir'], 'statistic_binary_encoders.pt')
         if os.path.exists(statistic_binary_encoders_path):
             self.statistic_binary_encoders.load_state_dict(torch.load(statistic_binary_encoders_path))
             print(f"Loaded statistic_binary_encoders parameters from {statistic_binary_encoders_path}")
-            print("已加载 statistic_binary_encoders_path")
+            print("Loaded statistic_binary_encoders_path")
         else:
-            print("初始化 statistic_binary_encoders from init")
+            print("Initializing statistic_binary_encoders from init")
 
         cls_norm_path = os.path.join(self.model_config['lora_checkpoint_dir'], 'cls_norm.pt')
         if os.path.exists(cls_norm_path):
@@ -412,14 +412,14 @@ class CrossRankMultiModalRankModel(torch.nn.Module):
 
 
         if self.model_config['gradient_checkpointing']:
-            print("开启梯度检查点")
+            print("Gradient checkpoint enabled")
             self.model.gradient_checkpointing_enable()
             self.model.enable_input_require_grads()
         else:
-            print("梯度检查点关闭")
+            print("Gradient checkpoint disabled")
 
 
-        # 默认FP32
+        # Default FP32
         self.model = self.model.to(torch.float16)
         self.classifier = self.classifier.to(torch.float16)
         self.statistic_binary_encoders = self.statistic_binary_encoders.to(torch.float16)
@@ -460,7 +460,7 @@ class CrossRankMultiModalRankModel(torch.nn.Module):
         print(f"Classifier: Try to load lora model from {self.model_config['lora_checkpoint_dir']}")
         classifier_lora_ckpt = os.path.join(self.model_config['lora_checkpoint_dir'], "classifier_lora")
         if os.path.exists(classifier_lora_ckpt):
-            # 初始化 LoRA 权重（注意不使用 from_pretrained）
+            # Initialize LoRA weights (not using from_pretrained)
             peft_classifier_config = LoraConfig(
                 lora_alpha=32,
                 lora_dropout=0.1,
@@ -471,7 +471,7 @@ class CrossRankMultiModalRankModel(torch.nn.Module):
             )
             classifier = PeftModel(classifier, peft_config=peft_classifier_config)
 
-            # 加载 LoRA adapter 权重
+            # Load LoRA adapter weights
             classifier.load_adapter(classifier_lora_ckpt, adapter_name="default", is_trainable=True)
             print(f"Loaded classifier LoRA adapter from {classifier_lora_ckpt}")
                 
@@ -526,7 +526,7 @@ class CrossRankMultiModalRankModel(torch.nn.Module):
 
     def forward(self, search_idxs, query_feat, statistic_feat, **inputs):   
         # for key, value in inputs.items():
-        #     # 打印键和对应值的形状
+        #     # Print key and shape of corresponding value
         #     print(f"Key: {key}, Shape: {value.shape}")
 
         outputs = self.model(**inputs, output_hidden_states=True)
@@ -539,28 +539,28 @@ class CrossRankMultiModalRankModel(torch.nn.Module):
         cls_output = self.mean_pooling(last_hidden_state, attention_mask)
         cls_output = cls_output.to(self.classifier.base_model.model.layers[0].mlp.up_proj.lora_A.default.weight)
 
-        # # 构造 feature tensor q侧特征： [B, F]
+        # # Construct feature tensor: query side features [B, F]
         feat_tensors = []
         for feat, encoder in self.query_binary_encoders.items():
             feat_tensor = query_feat[feat]
             # print(f"feat_tensor:{feat_tensor}")
-            encoded = torch.stack([encoder(i) for i in feat_tensor], dim=0)  # encoded 形状为 [B, 20]，B为正负样本总数，N为特征编码后的维度
-            # feat_tensor的每一个元素维度统一为 20
+            encoded = torch.stack([encoder(i) for i in feat_tensor], dim=0)  # encoded shape [B, 20], B=total positive/negative samples, N=dimension after encoding
+            # Each element of feat_tensor unified to dimension 20
             feat_tensors.append(encoded)
 
-        # # 拼接所有特征：[B, 5*20] = [B, 100]
-        feat_tensor = torch.cat(feat_tensors, dim=1)  # [B, 100]，B为正负样本总数，100为所有特征编码后的维度
+        # # Concatenate all features: [B, 5*20] = [B, 100]
+        feat_tensor = torch.cat(feat_tensors, dim=1)  # [B, 100], B=total positive/negative samples, 100=dimension after encoding all features
 
 
         Statistic_feats = []
         for feat, encoder in self.statistic_binary_encoders.items():
             user_feat_tensor = statistic_feat[feat]
-            # feat_tensor是一个张量列表，每一个张量代表当前数值的二进制转化后的张量
-            encoded = torch.stack([encoder(i) for i in user_feat_tensor], dim=0)  # encoded 形状为 [B, 20]
-            # feat_tensor的每一个元素维度统一为 20
+            # feat_tensor is a list of tensors, each tensor represents binary converted tensor of current value
+            encoded = torch.stack([encoder(i) for i in user_feat_tensor], dim=0)  # encoded shape [B, 20]
+            # Each element of feat_tensor unified to dimension 20
             Statistic_feats.append(encoded)
 
-        Statistic_feats = torch.cat(Statistic_feats, dim=1) # [B, X]，B为正负样本总数，X为所有特征编码后的维度
+        Statistic_feats = torch.cat(Statistic_feats, dim=1) # [B, X], B=total positive/negative samples, X=dimension after encoding all features
 
         cls_output = self.cls_norm(cls_output)         # [B, H]
 
@@ -574,18 +574,18 @@ class CrossRankMultiModalRankModel(torch.nn.Module):
         concat = torch.cat([concat, Statistic_feats], dim=1)  # [B, H+F]
         # print(f"concat.shape:{concat.shape}")
 
-        # 按query分开 核心代码：按 search_idx 拆成 list of tensors
+        # Split by query: Core code - split into list of tensors by search_idx
         search_tensor = torch.tensor(search_idxs)
         unique_ids, idx = self.unique_keep_order(search_tensor)
 
         batch_features = [concat[search_tensor == uid] for uid in unique_ids]
 
         batch_logits=[]
-        # 批量处理
+        # Batch processing
         for feat in batch_features:
             # feat.shape: [seq_len, 848]
-            # x指的是query与doc的嵌入向量
-            x = feat.unsqueeze(dim=0) # 从 [N, H+F] -> [1, N, H+F]
+            # x refers to embedding vector of query and doc
+            x = feat.unsqueeze(dim=0) # From [N, H+F] -> [1, N, H+F]
             # print(f"x.shape:{x.shape}")
             logits = self.classifier(x).squeeze(dim=0) # [N,1]
             batch_logits.append(logits)
@@ -603,15 +603,13 @@ class CrossRankMultiModalRankModel(torch.nn.Module):
             self.classifier.save_pretrained(os.path.join(save_path, "classifier_lora"))
             print("Saved classifier LoRA adapter.")
 
-        # 保存 binary_encoders（新增部分）
+        # Save binary_encoders (new part)
         query_binary_encoders_path = os.path.join(save_path, 'query_binary_encoders.pt')
         torch.save(self.query_binary_encoders.state_dict(), query_binary_encoders_path)
 
         statistic_binary_encoders_path = os.path.join(save_path, 'statistic_binary_encoders.pt')
         torch.save(self.statistic_binary_encoders.state_dict(), statistic_binary_encoders_path)
-        # RMSNorm 参数
+        # RMSNorm parameters
         torch.save(self.cls_norm.state_dict(), os.path.join(save_path, 'cls_norm.pt'))
         torch.save(self.query_norm.state_dict(), os.path.join(save_path, 'query_norm.pt'))
         torch.save(self.statistic_norm.state_dict(), os.path.join(save_path, 'statistic_norm.pt'))
-
-
